@@ -30,3 +30,6 @@ shot_*
 
 # Gambar referensi desain dari pihak ketiga.
 REFRENCE.webp
+
+# Output sementara saat menjalankan server untuk uji tampilan.
+sm.*
