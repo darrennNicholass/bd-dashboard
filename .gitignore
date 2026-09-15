@@ -21,5 +21,6 @@ __pycache__/
 # Jangan pernah masuk Git.
 *.log
 phase*.txt
+phase*.html
 *_output.txt
 data/raw/

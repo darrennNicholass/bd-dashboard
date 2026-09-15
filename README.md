@@ -51,6 +51,7 @@ bd-dashboard/
 ├── build_revenue.py        # Phase 6/7: df_financial + df_inkind
 ├── build_kpi.py            # Phase 8: jalankan & validasi seluruh KPI
 ├── build_period.py         # Phase 9: validasi filter periode
+├── build_charts.py         # Phase 10: bangun & validasi figure Plotly
 ├── requirements.txt
 ├── .env.example
 ├── src/
@@ -181,6 +182,34 @@ Validasi Phase 9 (`python build_period.py`) memeriksa:
 - perilaku tepi: bulan tanpa data, alias bulan Indonesia, pilihan ganda,
   bulan/kuartal ngawur, dataframe kosong, kolom `month` hilang
 
+## Aturan layer visualisasi (`src/charts.py`)
+
+Ditetapkan di Phase 10. Setiap fungsi menerima dataframe hasil `metrics.py`
+dan mengembalikan satu figure Plotly; tidak ada query data maupun perhitungan
+KPI di layer ini.
+
+| Aturan | Keputusan |
+|---|---|
+| Financial vs In-Kind | ditampilkan berdampingan dengan `barmode='group'`; **stack dilarang** karena tinggi totalnya akan terbaca sebagai penjumlahan |
+| Stack yang boleh | hanya Kelengkapan Dokumen (ada + belum = partner aktif) dan Kontrak per Bulan Berakhir; di kedua chart itu totalnya memang bermakna |
+| Warna | palet Okabe-Ito (colorblind-safe) + biru AIESEC; warna **tidak pernah** menjadi satu-satunya pembawa informasi, selalu ada label teks |
+| Bulan tanpa conversion rate | titik dibiarkan bolong (`connectgaps=False`), tidak digambar 0 |
+| Periode tanpa conversion rate | figure menampilkan "Sheet tidak menyediakan conversion rate untuk periode ini", bukan angka |
+| Dataframe kosong | figure berisi keterangan, bukan exception atau kanvas kosong |
+| Kolom kurang | `KeyError`, supaya tidak ada grafik yang menyesatkan |
+
+Empat belas figure: MR per PIC, MR per bulan, donut stakeholder, sales funnel,
+conversion per bulan, Financial & In-Kind per bulan, perbandingan keduanya,
+Financial & In-Kind per partner, kelengkapan dokumen, document tracker
+(heatmap), status kontrak, dan kontrak per bulan berakhir.
+
+Validasi Phase 10 (`python build_charts.py`) memeriksa **isi** figure, bukan
+hanya apakah figure terbentuk: jumlah nilai di setiap trace harus sama dengan
+angka dari `metrics.py` (MR 1694, partner 35, revenue, in-kind, 16 baris
+heatmap, funnel berakhir di 82,86 %). Script juga menulis
+`phase10_charts.html` untuk pemeriksaan visual — file itu memuat nama partner,
+jadi ikut diabaikan Git lewat pola `phase*.html`.
+
 ## Setup
 
 ```powershell
@@ -213,8 +242,8 @@ mencetak URL maupun isi credential.
 - [x] Phase 7 — In-kind value (tervalidasi: Rp119.685.000)
 - [x] Phase 8 — KPI layer (`src/metrics.py`; enam angka headline cocok)
 - [x] Phase 9 — Period filter (`src/periods.py`; baseline & additivitas cocok)
-- [ ] Phase 10 — Visualization  <-- LANJUT DI SINI
-- [ ] Phase 11 — Streamlit
+- [x] Phase 10 — Visualization (`src/charts.py`; 14 figure, isi figure tervalidasi)
+- [ ] Phase 11 — Streamlit  <-- LANJUT DI SINI
 - [ ] Phase 12 — QA
 - [ ] Phase 13 — Deployment
 - [ ] Phase 14 — Portfolio version
