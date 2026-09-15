@@ -20,7 +20,7 @@ ATURAN DATA GOVERNANCE:
   File ini tidak pernah menyimpan atau mengakses URL National ESSM asli.
   Nilai URL tidak pernah di-print oleh modul ini.
 """
-
+import streamlit as st
 from __future__ import annotations
 
 from functools import lru_cache
@@ -99,14 +99,31 @@ def credentials_exist() -> bool:
 
 
 def _require_env(name: str) -> str:
-    """Ambil env var wajib. Pesan error hanya menyebut NAMA-nya, bukan nilainya."""
+    """
+    Ambil konfigurasi wajib.
+
+    Prioritas:
+    1. Environment variable / .env untuk development lokal
+    2. Streamlit Secrets untuk deployment
+    """
+    load_environment()
+
     value = os.getenv(name, "").strip()
-    if not value:
-        raise RuntimeError(
-            f"Environment variable '{name}' belum terisi. "
-            f"Periksa file .env di root proyek."
-        )
-    return value
+
+    if value:
+        return value
+
+    try:
+        value = str(st.secrets[name]).strip()
+        if value:
+            return value
+    except (KeyError, FileNotFoundError):
+        pass
+
+    raise RuntimeError(
+        f"Konfigurasi '{name}' belum tersedia di environment "
+        "variable maupun Streamlit Secrets."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -116,22 +133,42 @@ def _require_env(name: str) -> str:
 
 @lru_cache(maxsize=1)
 def get_client() -> gspread.Client:
-    """Autentikasi Service Account dan kembalikan gspread client.
-
-    Di-cache dengan lru_cache supaya autentikasi hanya terjadi sekali
-    per proses, bukan setiap kali kita membaca worksheet.
     """
-    if not credentials_exist():
-        raise FileNotFoundError(
-            "credentials.json tidak ditemukan di root proyek. "
-            "File ini tidak boleh di-commit ke Git."
+    Autentikasi Google Service Account.
+
+    Lokal:
+        credentials.json
+
+    Streamlit Cloud:
+        st.secrets["gcp_service_account"]
+    """
+
+    # Development lokal
+    if credentials_exist():
+        creds = Credentials.from_service_account_file(
+            str(CREDENTIALS_PATH),
+            scopes=SCOPES,
         )
 
-    creds = Credentials.from_service_account_file(
-        str(CREDENTIALS_PATH),
-        scopes=SCOPES,
-    )
-    return gspread.authorize(creds)
+        return gspread.authorize(creds)
+
+    # Streamlit Cloud
+    try:
+        service_account_info = dict(st.secrets["gcp_service_account"])
+
+        creds = Credentials.from_service_account_info(
+            service_account_info,
+            scopes=SCOPES,
+        )
+
+        return gspread.authorize(creds)
+
+    except (KeyError, FileNotFoundError) as exc:
+        raise RuntimeError(
+            "Google Service Account credentials tidak ditemukan. "
+            "Gunakan credentials.json untuk lokal atau "
+            "gcp_service_account di Streamlit Secrets."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
