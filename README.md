@@ -50,12 +50,14 @@ bd-dashboard/
 ├── build_partner.py        # Phase 5: df_partner + df_conversion
 ├── build_revenue.py        # Phase 6/7: df_financial + df_inkind
 ├── build_kpi.py            # Phase 8: jalankan & validasi seluruh KPI
+├── build_period.py         # Phase 9: validasi filter periode
 ├── requirements.txt
 ├── .env.example
 ├── src/
 │   ├── sheets.py         # ekstraksi Google Sheets (satu-satunya akses API)
 │   ├── preparation.py    # penyiapan & validasi dataframe
 │   ├── metrics.py        # perhitungan KPI
+│   ├── periods.py        # filter periode (bulan / kuartal)
 │   └── charts.py         # visualisasi Plotly
 ├── notebooks/
 │   └── exploration.ipynb
@@ -138,6 +140,47 @@ Selain itu script memeriksa konsistensi agregasi (MR per PIC = MR per bulan =
 Total MR; revenue per bulan = per partner = total) dan perilaku layer
 (dataframe kosong, scope tidak ada, kolom kurang, pergeseran `reference_date`).
 
+## Aturan filter periode (`src/periods.py`)
+
+Ditetapkan di Phase 9. Satuan terkecil adalah **bulan**, karena sumber
+(penanda bulan, kolom `MONTHS`, `Month End` berformat `SEP 26`) tidak pernah
+memberi level harian.
+
+Perbedaan penting: KPI dibagi dua jenis, dan filter memperlakukannya berbeda.
+
+| Jenis | KPI | Perlakuan filter |
+|---|---|---|
+| **Aliran** | Total MR, Financial Revenue, In-Kind Value, partner baru | baris di luar periode dibuang; nilainya additif |
+| **Posisi** | Active Partners, Document Tracker, Expiry Tracker | baris **tidak** dibuang; `reference_date` digeser ke akhir periode |
+
+Kalau df_partner ikut disaring per bulan, Active Partners berubah arti jadi
+"partner yang didaftarkan bulan itu **dan** aktif" — angka yang tidak pernah
+diminta tim BD. Karena itu metrik posisi dihitung ulang lewat
+`preparation.apply_reference_date()`.
+
+| Aturan | Keputusan |
+|---|---|
+| Urutan bulan | masa jabatan: February → … → January (Januari tahun berikutnya) |
+| Kuartal | Q1 Feb–Apr, Q2 Mei–Jul, Q3 Agu–Okt, Q4 Nov–Jan (dicek silang dengan kolom `quarter` National 1.3/1.4) |
+| Tanggal acuan | akhir bulan terakhir periode, **tidak pernah** melewati hari ini |
+| Conversion rate | seluruh periode → scope `all`; satu bulan → scope bulan itu; gabungan beberapa bulan → **NaN** + catatan, karena sheet tidak menyediakannya dan aturan melarang hitung ulang |
+| February & March | sah dipilih untuk partner & revenue; Total MR-nya 0 (dibuang di Phase 3) disertai catatan |
+| Bulan tidak dikenal | `ValueError`, bukan hasil filter kosong yang menipu |
+
+`apply_period()` adalah satu-satunya tempat pilihan periode diterjemahkan,
+supaya semua KPI di dashboard pasti memakai periode yang sama.
+
+Validasi Phase 9 (`python build_period.py`) memeriksa:
+
+- seluruh periode mereproduksi enam angka baseline Phase 3–8
+- additivitas: jumlah 12 bulan = total (MR 1694, partner 35, revenue, in-kind)
+- kuartal hasil filter bulan = kolom `quarter` di sheet (8 perbandingan cocok)
+- conversion rate per bulan identik dengan nilai sheet; gabungan bulan → NaN
+- Active Partners tidak pernah naik saat tanggal acuan maju
+  (22 di Februari → 18 Juli → 17 Agustus → 16 per hari ini)
+- perilaku tepi: bulan tanpa data, alias bulan Indonesia, pilihan ganda,
+  bulan/kuartal ngawur, dataframe kosong, kolom `month` hilang
+
 ## Setup
 
 ```powershell
@@ -169,8 +212,8 @@ mencetak URL maupun isi credential.
 - [x] Phase 6 — Financial revenue (tervalidasi: Rp26.750.000)
 - [x] Phase 7 — In-kind value (tervalidasi: Rp119.685.000)
 - [x] Phase 8 — KPI layer (`src/metrics.py`; enam angka headline cocok)
-- [ ] Phase 9 — Period filter  <-- LANJUT DI SINI
-- [ ] Phase 10 — Visualization
+- [x] Phase 9 — Period filter (`src/periods.py`; baseline & additivitas cocok)
+- [ ] Phase 10 — Visualization  <-- LANJUT DI SINI
 - [ ] Phase 11 — Streamlit
 - [ ] Phase 12 — QA
 - [ ] Phase 13 — Deployment

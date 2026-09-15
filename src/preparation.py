@@ -627,6 +627,56 @@ def extract_partner_records(grid: list[list[str]]) -> list[dict]:
     return records
 
 
+def apply_reference_date(
+    df: pd.DataFrame, reference_date: pd.Timestamp | None = None
+) -> pd.DataFrame:
+    """Hitung ulang kolom yang bergantung pada TANGGAL ACUAN.
+
+    Status aktif adalah KPI point-in-time: "aktif" hanya punya arti
+    relatif terhadap satu tanggal. Fungsi ini dipisahkan supaya
+    dashboard bisa bertanya "siapa yang aktif per akhir Agustus?"
+    tanpa menarik ulang data dari Sheets.
+
+    Kolom yang dihitung ulang: is_ongoing, is_active, months_remaining.
+    Kolom lain tidak disentuh. Dataframe asli tidak diubah.
+    """
+    if df.empty:
+        return df
+
+    if reference_date is None:
+        reference_date = pd.Timestamp.today().normalize()
+
+    required = ("end_month", "has_loa")
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise KeyError(f"df_partner tidak punya kolom: {', '.join(missing)}")
+
+    result = df.copy()
+    reference_period = pd.Timestamp(reference_date).normalize().to_period("M")
+
+    def not_yet_ended(period) -> bool:
+        if period is pd.NaT or pd.isna(period):
+            return False
+        return period >= reference_period
+
+    result["is_ongoing"] = result["end_month"].map(not_yet_ended)
+
+    # ATURAN BD: partner aktif = ada LoA DAN kontrak belum berakhir.
+    result["is_active"] = result["has_loa"] & result["is_ongoing"]
+
+    result["months_remaining"] = pd.array(
+        [
+            (period - reference_period).n
+            if period is not pd.NaT and not pd.isna(period)
+            else pd.NA
+            for period in result["end_month"]
+        ],
+        dtype="Int64",
+    )
+    result.attrs["reference_date"] = pd.Timestamp(reference_date).normalize()
+    return result
+
+
 def build_df_partner(
     grid: list[list[str]] | None = None,
     reference_date: pd.Timestamp | None = None,
@@ -644,8 +694,6 @@ def build_df_partner(
     """
     if grid is None:
         grid = load_partner_grid()
-    if reference_date is None:
-        reference_date = pd.Timestamp.today().normalize()
 
     df = pd.DataFrame.from_records(extract_partner_records(grid))
     if df.empty:
@@ -655,27 +703,7 @@ def build_df_partner(
     df["end_month"] = df["end_month_raw"].map(parse_month_year)
     df["end_date"] = df["end_month"].map(period_to_month_end)
 
-    reference_period = reference_date.to_period("M")
-
-    def not_yet_ended(period) -> bool:
-        if period is pd.NaT or pd.isna(period):
-            return False
-        return period >= reference_period
-
-    df["is_ongoing"] = df["end_month"].map(not_yet_ended)
-
-    # ATURAN BD: partner aktif = ada LoA DAN kontrak belum berakhir.
-    df["is_active"] = df["has_loa"] & df["is_ongoing"]
-
-    df["months_remaining"] = pd.array(
-        [
-            (period - reference_period).n
-            if period is not pd.NaT and not pd.isna(period)
-            else pd.NA
-            for period in df["end_month"]
-        ],
-        dtype="Int64",
-    )
+    df = apply_reference_date(df, reference_date)
 
     month_categories = list(TERM_MONTH_ORDER)
     df["month"] = pd.Categorical(df["month"], categories=month_categories, ordered=True)

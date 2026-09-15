@@ -5,5 +5,6 @@ Susunan layer:
     sheets.py       -> ekstraksi data dari Google Sheets
     preparation.py  -> penyiapan & validasi dataframe
     metrics.py      -> perhitungan KPI
+    periods.py      -> filter periode (bulan / kuartal)
     charts.py       -> visualisasi Plotly
 """
