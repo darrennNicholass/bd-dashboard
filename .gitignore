@@ -25,8 +25,8 @@ phase*.html
 *_output.txt
 data/raw/
 
-# Screenshot dashboard memuat nama partner & nilai kontrak.
-shot_*.png
+# Screenshot & pratinjau tampilan memuat nama partner & nilai kontrak.
+shot_*
 
 # Gambar referensi desain dari pihak ketiga.
 REFRENCE.webp

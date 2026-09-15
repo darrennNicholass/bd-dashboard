@@ -148,20 +148,27 @@ STYLE = """
 
   /* ---- Daftar (gaya panel "Messages" pada referensi) ---- */
   .bd-list { display: flex; flex-direction: column; gap: .1rem; }
-  .bd-row { display: flex; align-items: center; gap: .65rem; padding: .5rem .35rem;
+  .bd-row { display: flex; align-items: center; gap: .6rem; padding: .5rem .35rem;
             border-radius: 14px; }
   .bd-row:hover { background: #F7F8FD; }
-  .bd-avatar { width: 34px; height: 34px; border-radius: 12px; flex: 0 0 34px;
-               display: flex; align-items: center; justify-content: center;
+  .bd-avatar { width: 34px; height: 34px; border-radius: 12px;
+               flex: 0 0 34px; display: flex; align-items: center;
+               justify-content: center;
                font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700;
                font-size: .74rem; color: #FFFFFF; }
-  .bd-row-main { flex: 1 1 auto; min-width: 0; }
+  /* min-width: 0 wajib ada: tanpa itu teks panjang menolak menyusut dan
+     menabrak tag durasi di kanan. */
+  .bd-row-main { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .bd-row-name, .bd-row-meta {
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: block; max-width: 100%;
+  }
   .bd-row-name { font-size: .82rem; font-weight: 600; color: #1B2559;
-                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .bd-row-meta { font-size: .72rem; color: #8A94AD; }
-  .bd-row-tag { font-size: .7rem; font-weight: 600; padding: .18rem .5rem;
-                border-radius: 999px; background: #F1F3FA; color: #4A5578;
-                white-space: nowrap; }
+                 line-height: 1.35; }
+  .bd-row-meta { font-size: .72rem; color: #8A94AD; line-height: 1.35; }
+  .bd-row-tag { flex: 0 0 auto; font-size: .7rem; font-weight: 600;
+                padding: .18rem .5rem; border-radius: 999px;
+                background: #EEF0FE; color: #3A45B8; white-space: nowrap; }
 
   /* ---- Tab ---- */
   div[data-baseweb="tab-list"] { gap: .3rem; border-bottom: 1px solid #E9ECF6; }
@@ -334,11 +341,6 @@ def sidebar_controls() -> tuple[object, bool]:
 
         st.divider()
         refresh = st.button("Muat ulang data", width="stretch", type="secondary")
-        st.caption(
-            "Sumber: Active ESSM (Market Research) dan National Mirror "
-            "(partner, revenue, in-kind). Akses read-only; dashboard tidak "
-            "bisa menulis ke ESSM."
-        )
     return selection, refresh
 
 
@@ -884,12 +886,6 @@ def main() -> None:
         tab_revenue(data)
     with documents:
         tab_documents(data)
-
-    st.caption(
-        "National ESSM asli tidak pernah diakses langsung — satu-satunya "
-        "sumber National adalah mirror spreadsheet. Angka conversion rate "
-        "diambil dari sheet, tidak dihitung ulang."
-    )
 
 
 if __name__ == "__main__":

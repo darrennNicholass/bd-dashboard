@@ -233,8 +233,6 @@ def main() -> int:
     check("halaman menyebut keduanya tidak dijumlahkan",
           "tidak pernah dijumlahkan" in caption_text
           or "tidak pernah dijumlahkan" in page_text)
-    check("halaman menyebut sumber National adalah mirror",
-          "mirror" in caption_text)
     check("URL spreadsheet tidak pernah dicetak ke halaman",
           "docs.google.com" not in page_text + caption_text)
 
