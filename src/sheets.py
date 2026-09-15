@@ -20,7 +20,6 @@ ATURAN DATA GOVERNANCE:
   File ini tidak pernah menyimpan atau mengakses URL National ESSM asli.
   Nilai URL tidak pernah di-print oleh modul ini.
 """
-import streamlit as st
 from __future__ import annotations
 
 from functools import lru_cache
@@ -28,6 +27,7 @@ from pathlib import Path
 import os
 
 import gspread
+import streamlit as st
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 
