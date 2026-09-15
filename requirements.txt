@@ -1,0 +1,19 @@
+# Dependensi langsung proyek BD Analytics Dashboard.
+# Versi di-pin (==) supaya hasil di laptop, di GitHub, dan di server deployment identik.
+# Transitive dependencies dibiarkan di-resolve oleh pip.
+
+# Data preparation & analisis
+pandas==3.0.5
+
+# Ekstraksi Google Sheets
+gspread==6.2.1
+google-auth==2.58.0
+
+# Konfigurasi rahasia via .env (tidak pernah di-commit)
+python-dotenv==1.2.3
+
+# Visualisasi
+plotly==7.0.0
+
+# Dashboard / UI
+streamlit==1.63.0

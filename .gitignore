@@ -1,0 +1,25 @@
+# === RAHASIA — JANGAN PERNAH DI-COMMIT ===
+credentials.json
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.pem
+*.key
+
+# === Python ===
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# === Notebook ===
+.ipynb_checkpoints/
+
+# === Output lokal / log sementara ===
+# File hasil inspeksi berisi nama partner, email, dan nomor telepon.
+# Jangan pernah masuk Git.
+*.log
+phase*.txt
+*_output.txt
+data/raw/
