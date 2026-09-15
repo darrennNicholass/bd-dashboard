@@ -33,3 +33,9 @@ REFRENCE.webp
 
 # Output sementara saat menjalankan server untuk uji tampilan.
 sm.*
+
+# Development/helper scripts
+build_*.py
+inspect_*.py
+preview_*.py
+verify_setup.py
