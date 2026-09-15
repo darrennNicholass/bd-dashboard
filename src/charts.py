@@ -1,5 +1,5 @@
 """
-charts.py — VISUALIZATION LAYER (Phase 10, digayakan ulang di Phase 11)
+charts.py â€” VISUALIZATION LAYER (Phase 10, digayakan ulang di Phase 11)
 
 Menerima dataframe yang SUDAH dihitung metrics.py dan mengembalikan figure
 Plotly. Tidak ada query data dan tidak ada perhitungan KPI di sini: kalau
@@ -20,8 +20,10 @@ ATURAN LAYER VISUALISASI
    figure juga memberi label teks/hover, supaya tetap terbaca oleh
    pengguna dengan buta warna maupun pembaca layar.
 
-4. Palet memakai Okabe-Ito (colorblind-safe) dengan biru AIESEC sebagai
-   warna utama.
+4. Palet memakai satu keluarga BIRU (permintaan tim BD): kategori
+   dibedakan lewat tingkat kegelapan, bukan warna yang berbeda. Karena
+   pembeda hue hilang, aturan 3 jadi makin wajib â€” setiap elemen selalu
+   punya label teks.
 
 5. Dataframe kosong menghasilkan figure berisi keterangan "tidak ada
    data", bukan exception dan bukan grafik kosong tanpa penjelasan.
@@ -54,38 +56,60 @@ from .metrics import EXPIRY_CATEGORIES
 # Palet & gaya
 # ---------------------------------------------------------------------------
 
+# Palet BIRU satu keluarga, sesuai permintaan tim BD. Dibedakan lewat
+# kegelapan (bukan warna berbeda), jadi urutannya tetap terbaca oleh
+# pengguna dengan buta warna â€” dan setiap elemen tetap diberi label teks.
+NAVY = "#16357E"
+INDIGO_DEEP = "#3B4BD8"
+PRIMARY = "#5B6BF7"
+PERIWINKLE = "#8492FB"
+SKY = "#2E9BF0"
+SKY_SOFT = "#7FC2F7"
+PALE_BLUE = "#B9CEFC"
+STEEL = "#8FA0C4"
+
+PRIMARY_DEEP = INDIGO_DEEP
+PRIMARY_SOFT = PERIWINKLE
+PRIMARY_FILL = "rgba(91, 107, 247, 0.16)"
+
+# Biru AIESEC tetap disimpan sebagai warna merek.
 AIESEC_BLUE = "#037EF3"
 
-# Okabe-Ito: aman untuk deuteranopia/protanopia, kontras baik di latar putih.
+# Urutan palet kategori: gelap-terang bergantian supaya potongan yang
+# bersebelahan tidak pernah punya kegelapan yang mirip.
 PALETTE: tuple[str, ...] = (
-    "#0072B2",  # biru
-    "#E69F00",  # oranye
-    "#009E73",  # hijau
-    "#CC79A7",  # merah muda
-    "#56B4E9",  # biru langit
-    "#D55E00",  # vermilion
-    "#8C6D31",  # cokelat
-    "#666666",  # abu
+    PRIMARY,       # indigo
+    SKY,           # biru terang
+    NAVY,          # biru tua
+    PERIWINKLE,    # indigo muda
+    SKY_SOFT,      # biru langit muda
+    INDIGO_DEEP,   # indigo tua
+    PALE_BLUE,     # biru sangat muda
+    STEEL,         # biru keabu
 )
 
-COLOR_FINANCIAL = "#0072B2"
-COLOR_INKIND = "#E69F00"
-COLOR_POSITIVE = "#009E73"
-COLOR_MUTED = "#D9DEE5"
-COLOR_TEXT = "#1F2933"
-COLOR_SUBTEXT = "#66707A"
-COLOR_GRID = "#EDF0F4"
+COLOR_FINANCIAL = PRIMARY
+COLOR_INKIND = SKY
+COLOR_POSITIVE = "#1F7AE0"
+COLOR_MUTED = "#DDE3F1"
+COLOR_TEXT = "#1B2559"
+COLOR_SUBTEXT = "#8A94AD"
+COLOR_GRID = "#EEF1F8"
 
-# Warna kategori expiry: makin mendesak makin panas.
+# Kategori expiry: makin mendesak makin gelap. Label teksnya selalu ikut,
+# jadi kegelapan warna hanya penguat, bukan satu-satunya penanda.
 EXPIRY_COLORS: dict[str, str] = {
-    EXPIRY_CATEGORIES[0]: "#D55E00",  # expired
-    EXPIRY_CATEGORIES[1]: "#E69F00",  # berakhir bulan ini
-    EXPIRY_CATEGORIES[2]: "#56B4E9",  # 1-3 bulan lagi
-    EXPIRY_CATEGORIES[3]: "#009E73",  # lebih dari 3 bulan
-    EXPIRY_CATEGORIES[4]: "#98A2AD",  # tanpa data
+    EXPIRY_CATEGORIES[0]: NAVY,        # expired
+    EXPIRY_CATEGORIES[1]: PRIMARY,     # berakhir bulan ini
+    EXPIRY_CATEGORIES[2]: SKY,         # 1-3 bulan lagi
+    EXPIRY_CATEGORIES[3]: SKY_SOFT,    # lebih dari 3 bulan
+    EXPIRY_CATEGORIES[4]: STEEL,       # tanpa data
 }
 
-FONT_FAMILY = "Inter, Segoe UI, Roboto, system-ui, sans-serif"
+# Dua keluarga font supaya hierarki tulisan tidak monoton: Plus Jakarta Sans
+# yang geometris untuk judul dan angka, Inter untuk teks kecil.
+FONT_HEADING = "Plus Jakarta Sans, Inter, Segoe UI, system-ui, sans-serif"
+FONT_FAMILY = "Inter, Plus Jakarta Sans, Segoe UI, system-ui, sans-serif"
 BASE_FONT_SIZE = 12
 LABEL_FONT_SIZE = 11
 
@@ -148,7 +172,11 @@ def _style(
                 "text": title,
                 "x": 0, "xanchor": "left",
                 "y": 1, "yanchor": "top",
-                "font": {"size": BASE_FONT_SIZE + 3},
+                "font": {
+                    "family": FONT_HEADING,
+                    "size": BASE_FONT_SIZE + 3,
+                    "weight": 700,
+                },
             }
         )
     else:
@@ -267,7 +295,7 @@ def mr_by_pic_bar(
             # Batang teratas diberi warna penuh, sisanya sedikit lebih muda:
             # urutan tetap terbaca walau warnanya diabaikan.
             marker_color=[
-                AIESEC_BLUE if value == top_value else "#7FBFF9"
+                PRIMARY if value == top_value else PRIMARY_SOFT
                 for value in data["total_mr"]
             ],
             text=data["total_mr"],
@@ -283,7 +311,7 @@ def mr_by_pic_bar(
     fig.update_yaxes(title="", gridcolor="rgba(0,0,0,0)")
     if description is None:
         description = (
-            f"{len(df_by_pic)} PIC · total {int(df_by_pic['total_mr'].sum())} MR"
+            f"{len(df_by_pic)} PIC Â· total {int(df_by_pic['total_mr'].sum())} MR"
         )
     return _style(fig, title, description, height=max(200, 24 * len(data) + 70))
 
@@ -306,7 +334,7 @@ def mr_monthly_bar(
             y=values,
             # Bulan tanpa MR dibuat abu: tetap terlihat sebagai bulan yang
             # ada, tapi tidak menarik perhatian.
-            marker_color=[AIESEC_BLUE if value else COLOR_MUTED for value in values],
+            marker_color=[PRIMARY if value else COLOR_MUTED for value in values],
             text=[value if value else "" for value in values],
             textposition="outside",
             textfont={"size": LABEL_FONT_SIZE},
@@ -318,8 +346,133 @@ def mr_monthly_bar(
     fig.update_layout(showlegend=False, bargap=0.3)
     fig.update_yaxes(visible=False)
     if description is None:
-        description = f"Total {int(values.sum())} MR · urut masa jabatan"
+        description = f"Total {int(values.sum())} MR Â· urut masa jabatan"
     return _style(fig, title, description)
+
+
+def mr_monthly_area(
+    df_by_month: pd.DataFrame,
+    title: str | None = "Statistik Market Research",
+    description: str | None = None,
+    height: int = 335,
+) -> go.Figure:
+    """Area chart tren MR per bulan â€” chart utama di halaman Ringkasan.
+
+    Bentuknya mengikuti arah desain yang diminta: garis melengkung dengan
+    gradien lembut, penanda titik, dan bulan puncak diberi label supaya
+    pembaca langsung tahu di mana titik tertingginya.
+    """
+    if df_by_month is None or df_by_month.empty:
+        return _empty_figure(title, height=height)
+
+    _require_columns(df_by_month, ("month", "total_mr"), "df MR per bulan")
+    labels = _month_labels(df_by_month["month"])
+    values = list(df_by_month["total_mr"])
+
+    # Bulan setelah data terakhir dikosongkan (None), bukan digambar 0.
+    # Kalau digambar 0, garisnya jatuh ke dasar dan terbaca sebagai
+    # "MR-nya anjlok", padahal bulannya memang belum terjadi.
+    last_filled = max(
+        (index for index, value in enumerate(values) if value), default=-1
+    )
+    plotted = [
+        value if index <= last_filled else None
+        for index, value in enumerate(values)
+    ]
+
+    fig = go.Figure(
+        go.Scatter(
+            x=labels,
+            y=plotted,
+            mode="lines+markers",
+            line={"color": PRIMARY, "width": 3, "shape": "spline", "smoothing": 0.6},
+            marker={
+                "size": 7, "color": "#FFFFFF",
+                "line": {"color": PRIMARY, "width": 2.5},
+            },
+            fill="tozeroy",
+            fillcolor=PRIMARY_FILL,
+            connectgaps=False,
+            hovertemplate="%{x}: %{y} MR<extra></extra>",
+            name="MR",
+        )
+    )
+
+    # Label pada bulan puncak: satu angka penting yang langsung terbaca,
+    # tanpa perlu menempeli seluruh titik dengan teks.
+    if any(values):
+        peak_index = int(pd.Series(values).idxmax())
+        fig.add_annotation(
+            x=labels[peak_index], y=values[peak_index],
+            text=f"<b>{values[peak_index]}</b> MR",
+            showarrow=False, yshift=22,
+            bgcolor=PRIMARY, bordercolor=PRIMARY, borderpad=5,
+            font={"family": FONT_HEADING, "size": LABEL_FONT_SIZE, "color": "#FFFFFF"},
+        )
+
+    fig.update_layout(showlegend=False)
+    fig.update_yaxes(visible=False)
+    fig.update_xaxes(tickfont={"size": LABEL_FONT_SIZE + 1})
+    if description is None:
+        total = int(sum(values))
+        description = f"Total {total} MR sepanjang periode"
+    return _style(fig, title, description, height=height)
+
+
+def gauge_donut(
+    value: float,
+    total: float,
+    label: str,
+    title: str | None = None,
+    on_dark: bool = False,
+    height: int = 210,
+) -> go.Figure:
+    """Cincin progres dengan angka besar di tengah.
+
+    Dipakai untuk Active Partners: porsi partner aktif dari seluruh
+    portofolio. Angka dan keterangan ditulis di tengah, jadi cincinnya
+    hanya penguat visual â€” bukan satu-satunya pembawa informasi.
+    """
+    if total is None or pd.isna(total) or float(total) <= 0:
+        return _empty_figure(title, height=height)
+
+    value = 0.0 if value is None or pd.isna(value) else float(value)
+    total = float(total)
+    remainder = max(total - value, 0.0)
+    share = value / total * 100 if total else 0.0
+
+    ring = "#FFFFFF" if on_dark else PRIMARY
+    rest = "rgba(255,255,255,0.22)" if on_dark else COLOR_MUTED
+    text_color = "#FFFFFF" if on_dark else COLOR_TEXT
+    sub_color = "rgba(255,255,255,0.72)" if on_dark else COLOR_SUBTEXT
+
+    fig = go.Figure(
+        go.Pie(
+            values=[value, remainder],
+            labels=[label, "sisanya"],
+            hole=0.78,
+            sort=False,
+            direction="clockwise",
+            rotation=0,
+            marker={"colors": [ring, rest], "line": {"width": 0}},
+            textinfo="none",
+            hovertemplate="%{label}: %{value:.0f}<extra></extra>",
+        )
+    )
+    fig.add_annotation(
+        text=(
+            f"<span style='font-size:30px'><b>{value:.0f}</b></span>"
+            f"<span style='font-size:13px;color:{sub_color}'>/{total:.0f}</span>"
+            f"<br><span style='font-size:11px;color:{sub_color}'>{label}</span>"
+        ),
+        x=0.5, y=0.5, showarrow=False,
+        font={"family": FONT_HEADING, "color": text_color},
+    )
+    fig.update_layout(showlegend=False, margin={"l": 6, "r": 6, "t": 6, "b": 6})
+    styled = _style(fig, title, height=height)
+    styled.update_layout(meta={"description": f"{label}: {value:.0f} dari {total:.0f} "
+                                              f"({share:.1f}%)"})
+    return styled
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +571,7 @@ def conversion_funnel_chart(
             y=labels,
             x=data["conversion_rate"],
             marker={
-                "color": [AIESEC_BLUE] * (len(labels) - 1) + [COLOR_POSITIVE],
+                "color": [PRIMARY] * (len(labels) - 1) + [COLOR_POSITIVE],
                 "line": {"color": "#FFFFFF", "width": 1},
             },
             connector={"line": {"color": COLOR_GRID, "width": 1}},
@@ -455,11 +608,11 @@ def conversion_monthly_line(
             x=_month_labels(df_by_month["month"]),
             y=df_by_month["conversion_rate"],
             mode="lines+markers+text",
-            line={"color": AIESEC_BLUE, "width": 2.5, "shape": "spline",
+            line={"color": PRIMARY, "width": 2.5, "shape": "spline",
                   "smoothing": 0.4},
             marker={"size": 8, "line": {"color": "#FFFFFF", "width": 2}},
             fill="tozeroy",
-            fillcolor="rgba(3,126,243,0.10)",
+            fillcolor=PRIMARY_FILL,
             text=[_percent(value) for value in df_by_month["conversion_rate"]],
             textposition="top center",
             textfont={"size": LABEL_FONT_SIZE, "color": COLOR_SUBTEXT},
@@ -476,7 +629,7 @@ def conversion_monthly_line(
 
 
 # ---------------------------------------------------------------------------
-# Revenue — Financial dan In-Kind SELALU TERPISAH
+# Revenue â€” Financial dan In-Kind SELALU TERPISAH
 # ---------------------------------------------------------------------------
 
 
@@ -525,6 +678,7 @@ def revenue_comparison_bar(
     inkind_total: float,
     title: str | None = "Financial Revenue vs In-Kind Value",
     description: str | None = None,
+    height: int = 205,
 ) -> go.Figure:
     """Dua batang berdampingan: financial dan in-kind.
 
@@ -534,7 +688,7 @@ def revenue_comparison_bar(
     """
     values = [financial_total, inkind_total]
     if all(value is None or pd.isna(value) for value in values):
-        return _empty_figure(title)
+        return _empty_figure(title, height=height)
 
     labels = ["Financial<br>Revenue", "In-Kind<br>Value"]
     fig = go.Figure()
@@ -558,8 +712,8 @@ def revenue_comparison_bar(
     fig.update_layout(barmode="group", showlegend=False)
     fig.update_yaxes(visible=False)
     if description is None:
-        description = "Dua KPI terpisah — tidak pernah dijumlahkan"
-    return _style(fig, title, description)
+        description = "Dua KPI terpisah â€” tidak pernah dijumlahkan"
+    return _style(fig, title, description, height=height)
 
 
 def revenue_by_partner_bar(
@@ -645,7 +799,10 @@ def document_completeness_bar(
         )
     )
     fig.update_layout(barmode="stack", showlegend=True, bargap=0.35)
-    fig.update_yaxes(visible=False)
+    # Ruang ekstra di atas supaya angka di segmen teratas tidak terpotong
+    # oleh legenda maupun tepi kartu.
+    tallest = float((df_completeness["available"] + df_completeness["missing"]).max())
+    fig.update_yaxes(visible=False, range=[0, tallest * 1.22])
     if description is None:
         description = "Hanya partner aktif"
     return _style(fig, title, description)
@@ -682,13 +839,13 @@ def document_tracker_heatmap(
             colorscale=[[0, COLOR_MUTED], [1, COLOR_POSITIVE]],
             showscale=False,
             xgap=4, ygap=4,
-            hovertemplate="%{y} · %{x}: %{text}<extra></extra>",
+            hovertemplate="%{y} Â· %{x}: %{text}<extra></extra>",
         )
     )
     fig.update_xaxes(side="top", tickfont={"size": LABEL_FONT_SIZE})
     fig.update_yaxes(title="", autorange="reversed", gridcolor="rgba(0,0,0,0)")
     if description is None:
-        description = f"{len(df_tracker)} partner aktif · v = dokumen ada"
+        description = f"{len(df_tracker)} partner aktif Â· v = dokumen ada"
     return _style(fig, title, description, height=max(240, 22 * len(df_tracker) + 90))
 
 
@@ -712,19 +869,25 @@ def expiry_summary_bar(
         EXPIRY_COLORS.get(str(category), COLOR_MUTED)
         for category in df_summary["expiry_category"]
     ]
-    # Label dipendekkan supaya lima kategori tidak saling tindih.
+    # Label dipendekkan supaya lima kategori berdiri tegak tanpa saling
+    # tindih; nama panjangnya tetap muncul di hover.
+    short_labels = {
+        EXPIRY_CATEGORIES[0]: "Expired",
+        EXPIRY_CATEGORIES[1]: "Bln ini",
+        EXPIRY_CATEGORIES[2]: "1â€“3 bln",
+        EXPIRY_CATEGORIES[3]: ">3 bln",
+        EXPIRY_CATEGORIES[4]: "Tanpa data",
+    }
     labels = [
-        str(value).replace("berakhir bulan ini", "bulan ini")
-        .replace("lebih dari 3 bulan", "> 3 bulan")
-        .title()
-        for value in df_summary["expiry_category"]
+        short_labels.get(str(value), str(value)) for value in df_summary["expiry_category"]
     ]
+    counts = list(df_summary["partner_count"])
     fig = go.Figure(
         go.Bar(
             x=labels,
-            y=df_summary["partner_count"],
+            y=counts,
             marker_color=colors,
-            text=df_summary["partner_count"],
+            text=counts,
             textposition="outside",
             textfont={"size": LABEL_FONT_SIZE},
             cliponaxis=False,
@@ -734,7 +897,8 @@ def expiry_summary_bar(
         )
     )
     fig.update_layout(showlegend=False, bargap=0.35)
-    fig.update_yaxes(visible=False)
+    fig.update_xaxes(tickangle=0)
+    fig.update_yaxes(visible=False, range=[0, (max(counts) if counts else 1) * 1.25])
     if description is None:
         description = "Kategori berbasis bulan (sumber tidak punya level harian)"
     return _style(fig, title, description)

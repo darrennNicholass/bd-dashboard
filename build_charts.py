@@ -136,6 +136,13 @@ def main() -> int:
     )
 
     figures: dict[str, go.Figure] = {
+        "MR per bulan (area)": charts.mr_monthly_area(mr_by_month),
+        "Gauge partner aktif": charts.gauge_donut(
+            metrics.get_active_partner_count(everything.df_partner),
+            metrics.get_partner_count(everything.df_partner),
+            "partner aktif",
+            title="Partner aktif",
+        ),
         "MR per PIC": charts.mr_by_pic_bar(mr_by_pic),
         "MR per bulan": charts.mr_monthly_bar(mr_by_month),
         "Distribusi stakeholder": charts.stakeholder_donut(stakeholder),
@@ -198,6 +205,21 @@ def main() -> int:
           str(mr_by_pic.iloc[0]["pic_aiesec"]))
     check("MR per bulan: jumlah bar = Total MR",
           int(trace_sum(figures["MR per bulan"])) == BASELINE["total_mr"])
+    check("MR per bulan (area): jumlah titik = Total MR",
+          int(trace_sum(figures["MR per bulan (area)"])) == BASELINE["total_mr"])
+    peak_labels = [
+        item.text for item in figures["MR per bulan (area)"].layout.annotations
+    ]
+    check("MR per bulan (area): bulan puncak diberi label angka",
+          any(str(int(mr_by_month['total_mr'].max())) in str(text)
+              for text in peak_labels),
+          f"puncak {int(mr_by_month['total_mr'].max())} MR")
+    gauge = figures["Gauge partner aktif"]
+    check("Gauge: cincin = partner aktif + sisanya = seluruh partner",
+          int(trace_sum(gauge)) == BASELINE["partner_count"])
+    check("Gauge: angka di tengah = jumlah partner aktif",
+          any(f"<b>{BASELINE['active_partners']}</b>" in str(item.text)
+              for item in gauge.layout.annotations))
     check("Stakeholder: jumlah potongan donut = jumlah partner",
           int(trace_sum(figures["Distribusi stakeholder"])) == BASELINE["partner_count"])
     check("Funnel: nilai tahap terakhir = conversion rate KPI",
@@ -303,6 +325,8 @@ def main() -> int:
     empty_cases = {
         "mr_by_pic_bar": charts.mr_by_pic_bar(empty),
         "mr_monthly_bar": charts.mr_monthly_bar(empty),
+        "mr_monthly_area": charts.mr_monthly_area(empty),
+        "gauge_donut": charts.gauge_donut(0, 0, "partner aktif"),
         "stakeholder_donut": charts.stakeholder_donut(empty),
         "conversion_funnel_chart": charts.conversion_funnel_chart(empty),
         "conversion_monthly_line": charts.conversion_monthly_line(empty),

@@ -196,16 +196,21 @@ KPI di layer ini.
 |---|---|
 | Financial vs In-Kind | ditampilkan berdampingan dengan `barmode='group'`; **stack dilarang** karena tinggi totalnya akan terbaca sebagai penjumlahan |
 | Stack yang boleh | hanya Kelengkapan Dokumen (ada + belum = partner aktif) dan Kontrak per Bulan Berakhir; di kedua chart itu totalnya memang bermakna |
-| Warna | palet Okabe-Ito (colorblind-safe) + biru AIESEC; warna **tidak pernah** menjadi satu-satunya pembawa informasi, selalu ada label teks |
+| Palet | satu keluarga **biru** (permintaan tim BD): navy → indigo → biru langit; kategori dibedakan lewat kegelapan, bukan hue |
+| Warna | **tidak pernah** menjadi satu-satunya pembawa informasi — karena palet sewarna, setiap elemen wajib punya label teks |
+| Bulan tanpa data | untuk MR, garis area berhenti di bulan terakhir yang berisi (bukan turun ke 0, yang terbaca sebagai anjlok) |
 | Bulan tanpa conversion rate | titik dibiarkan bolong (`connectgaps=False`), tidak digambar 0 |
 | Periode tanpa conversion rate | figure menampilkan "Sheet tidak menyediakan conversion rate untuk periode ini", bukan angka |
 | Dataframe kosong | figure berisi keterangan, bukan exception atau kanvas kosong |
 | Kolom kurang | `KeyError`, supaya tidak ada grafik yang menyesatkan |
+| Gaya | chrome minimal: tanpa garis sumbu, grid tipis, sumbu nilai dihilangkan kalau angkanya sudah menempel di elemen |
+| Label uang | bentuk ringkas di grafik (`Rp26,8 jt`), nilai penuh di hover |
 
-Empat belas figure: MR per PIC, MR per bulan, donut stakeholder, sales funnel,
-conversion per bulan, Financial & In-Kind per bulan, perbandingan keduanya,
-Financial & In-Kind per partner, kelengkapan dokumen, document tracker
-(heatmap), status kontrak, dan kontrak per bulan berakhir.
+Enam belas figure: MR per PIC, MR per bulan (bar & area), gauge partner aktif,
+donut stakeholder, sales funnel, conversion per bulan, Financial & In-Kind per
+bulan, perbandingan keduanya, Financial & In-Kind per partner, kelengkapan
+dokumen, document tracker (heatmap), status kontrak, dan kontrak per bulan
+berakhir.
 
 Validasi Phase 10 (`python build_charts.py`) memeriksa **isi** figure, bukan
 hanya apakah figure terbentuk: jumlah nilai di setiap trace harus sama dengan
@@ -225,16 +230,32 @@ ada aturan bisnis baru di sana.
 
 | Bagian | Isi |
 |---|---|
-| Sidebar | pilihan rentang (Seluruh periode / Kuartal / Bulan) dan tombol muat ulang data |
-| Kartu KPI | Market Research, Active Partners, Conversion Rate, Financial Revenue, In-Kind Value — lima kartu, **tanpa** kartu gabungan |
-| Pill status | kontrak berakhir bulan ini, kontrak 1–3 bulan lagi, dokumen yang belum ada, catatan periode |
+| Sidebar | brand mark, pilihan rentang (Semua / Kuartal / Bulan), tombol muat ulang data |
+| Kartu KPI | Market Research, Active Partners, Conversion Rate, Financial Revenue, In-Kind Value — lima kartu bersparkline, **tanpa** kartu gabungan |
+| Pill status | kontrak aktif berakhir bulan ini, kontrak 1–3 bulan lagi, dokumen yang belum ada, catatan periode |
+| Ringkasan | area chart MR (fokus utama), kartu gelap gauge partner aktif, panel "Perlu perhatian", lalu funnel · status kontrak · kelengkapan dokumen |
 | Tab | Ringkasan · Market Research · Partner & Funnel · Revenue · Dokumen & Kontrak |
+
+### Arah desain
+
+Mengikuti referensi yang diberikan tim BD: SaaS dashboard soft-indigo.
+
+| Elemen | Keputusan |
+|---|---|
+| Latar & kartu | latar lavender `#F4F6FC`, kartu putih radius 20 px, border tipis, bayangan halus — bukan kotak bergaris tegas |
+| Aksen | indigo `#5B6BF7`; satu kartu gelap bergradien indigo sebagai penarik mata |
+| Palet plot | satu keluarga biru (navy → indigo → biru langit), lihat aturan `charts.py` |
+| Tipografi | dua keluarga font supaya tidak monoton: **Plus Jakarta Sans** (judul & angka) + **Inter** (teks), diatur lewat `theme.headingFont` dan `theme.font` |
+| Hierarki | label KPI kecil huruf kapital berspasi, angka besar tebal, keterangan abu kecil |
+| Sparkline | `st.metric(chart_data=...)` di setiap kartu KPI; warnanya ikut keluarga biru |
 
 | Aturan | Keputusan |
 |---|---|
 | Cache | `st.cache_data` TTL 15 menit; data ESSM diperbarui manual jadi tidak perlu lebih sering, sekaligus menghemat kuota API |
 | Nilai uang | kartu & label grafik memakai bentuk ringkas (`Rp26,8 jt`), nilai penuh ada di tooltip dan hover |
 | Conversion rate kosong | ditampilkan `—` disertai keterangan, tidak pernah 0 |
+| Delta kartu KPI | tanpa panah (`delta_arrow="off"`), karena isinya keterangan ("11 PIC terlibat"), bukan perubahan |
+| Nama partner di HTML | selalu lewat `html.escape()`; isi spreadsheet tidak diperlakukan sebagai markup |
 | Gaya grafik | modebar Plotly disembunyikan, sumbu nilai dihilangkan kalau angkanya sudah menempel di elemen |
 | Kegagalan koneksi | pesan yang menyebut `.env` / `credentials.json` / akses Viewer, bukan traceback mentah saja |
 

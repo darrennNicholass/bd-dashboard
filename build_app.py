@@ -220,7 +220,7 @@ def main() -> int:
 
     # ------------------------------------------------------------------
     section("5. ATURAN BISNIS TERJAGA DI UI")
-    app.segmented_control[0].set_value("Seluruh periode").run()
+    app.segmented_control[0].set_value("Semua").run()
     labels = [item.label for item in app.metric]
     page_text = " ".join(item.value for item in app.markdown).lower()
     caption_text = " ".join(item.value for item in app.caption).lower()

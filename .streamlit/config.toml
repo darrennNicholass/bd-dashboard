@@ -1,13 +1,29 @@
 # Tema dashboard. Aman di-commit: tidak ada rahasia di sini.
 # Rahasia (URL spreadsheet, credential) tetap di .env / secrets.toml.
+#
+# Arah desain (referensi tim BD): SaaS dashboard soft-indigo — latar
+# lavender lembut, kartu putih membulat, aksen indigo, tipografi geometris.
 
 [theme]
 base = "light"
-primaryColor = "#037EF3"          # biru AIESEC
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F6F8FB"
-textColor = "#1F2933"
-font = "sans-serif"
+
+# Indigo sebagai warna aksi, biru AIESEC tetap dipakai di grafik sebagai
+# warna merek.
+primaryColor = "#5B6BF7"
+backgroundColor = "#F4F6FC"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1B2559"
+
+# Tipografi: Plus Jakarta Sans (geometris, untuk judul & angka) dipadu
+# Inter (badan teks). Dua keluarga font supaya hierarkinya tidak monoton.
+font = "Inter, sans-serif"
+headingFont = "Plus Jakarta Sans, sans-serif"
+baseFontSize = 15
+
+# Sudut membulat dan tanpa garis tegas pada widget, mengikuti referensi.
+baseRadius = "1rem"
+borderColor = "#E9ECF6"
+showWidgetBorder = false
 
 [server]
 # Dashboard memuat nama partner dan nilai kontrak, dan tidak punya
