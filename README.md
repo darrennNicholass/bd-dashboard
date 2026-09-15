@@ -42,6 +42,7 @@ Script itu hanya menampilkan bagian range dan menyensor URL spreadsheet sumber.
 
 ```
 bd-dashboard/
+├── app.py                  # Phase 11: dashboard Streamlit
 ├── verify_setup.py         # Phase 1: verifikasi environment & koneksi
 ├── inspect_active.py       # Phase 2: inspeksi struktur Active ESSM
 ├── build_mr.py             # Phase 3: bangun & validasi df_mr
@@ -52,6 +53,9 @@ bd-dashboard/
 ├── build_kpi.py            # Phase 8: jalankan & validasi seluruh KPI
 ├── build_period.py         # Phase 9: validasi filter periode
 ├── build_charts.py         # Phase 10: bangun & validasi figure Plotly
+├── build_app.py            # Phase 11: jalankan app headless & validasi angkanya
+├── .streamlit/
+│   └── config.toml       # tema + bind ke localhost (tanpa rahasia)
 ├── requirements.txt
 ├── .env.example
 ├── src/
@@ -210,6 +214,49 @@ heatmap, funnel berakhir di 82,86 %). Script juga menulis
 `phase10_charts.html` untuk pemeriksaan visual — file itu memuat nama partner,
 jadi ikut diabaikan Git lewat pola `phase*.html`.
 
+## Dashboard (`app.py`)
+
+Dibangun di Phase 11. `app.py` hanya mengatur tata letak dan interaksi; tidak
+ada aturan bisnis baru di sana.
+
+```powershell
+.\.venv\Scripts\streamlit.exe run app.py
+```
+
+| Bagian | Isi |
+|---|---|
+| Sidebar | pilihan rentang (Seluruh periode / Kuartal / Bulan) dan tombol muat ulang data |
+| Kartu KPI | Market Research, Active Partners, Conversion Rate, Financial Revenue, In-Kind Value — lima kartu, **tanpa** kartu gabungan |
+| Pill status | kontrak berakhir bulan ini, kontrak 1–3 bulan lagi, dokumen yang belum ada, catatan periode |
+| Tab | Ringkasan · Market Research · Partner & Funnel · Revenue · Dokumen & Kontrak |
+
+| Aturan | Keputusan |
+|---|---|
+| Cache | `st.cache_data` TTL 15 menit; data ESSM diperbarui manual jadi tidak perlu lebih sering, sekaligus menghemat kuota API |
+| Nilai uang | kartu & label grafik memakai bentuk ringkas (`Rp26,8 jt`), nilai penuh ada di tooltip dan hover |
+| Conversion rate kosong | ditampilkan `—` disertai keterangan, tidak pernah 0 |
+| Gaya grafik | modebar Plotly disembunyikan, sumbu nilai dihilangkan kalau angkanya sudah menempel di elemen |
+| Kegagalan koneksi | pesan yang menyebut `.env` / `credentials.json` / akses Viewer, bukan traceback mentah saja |
+
+**Keamanan:** dashboard ini tidak punya autentikasi dan menampilkan nama
+partner serta nilai kontrak. `.streamlit/config.toml` mengikat server ke
+`127.0.0.1` supaya sesi lokal tidak ikut terekspos ke jaringan. Sebelum
+dideploy (Phase 13) wajib dipasangi proteksi akses.
+
+Validasi Phase 11 (`python build_app.py`) menjalankan `app.py` headless lewat
+`streamlit.testing.AppTest`, lalu membandingkan angka yang benar-benar tampil
+di kartu KPI dengan hasil hitungan `metrics.py` untuk tiga periode:
+
+```
+seluruh periode  1.694 | 16 | 82,86%  | Rp26,8 jt  | Rp119,7 jt
+Agustus            355 | 17 | 100,00% | Rp5,5 jt   | Rp2,3 jt
+QUARTER #2       1.124 | 18 | —       | Rp19,5 jt  | Rp110,3 jt
+```
+
+Script itu juga memastikan tidak ada kartu "Total Revenue", halaman menyebut
+kedua KPI revenue tidak dijumlahkan, dan URL spreadsheet tidak pernah tercetak
+ke halaman.
+
 ## Setup
 
 ```powershell
@@ -243,7 +290,7 @@ mencetak URL maupun isi credential.
 - [x] Phase 8 — KPI layer (`src/metrics.py`; enam angka headline cocok)
 - [x] Phase 9 — Period filter (`src/periods.py`; baseline & additivitas cocok)
 - [x] Phase 10 — Visualization (`src/charts.py`; 14 figure, isi figure tervalidasi)
-- [ ] Phase 11 — Streamlit  <-- LANJUT DI SINI
-- [ ] Phase 12 — QA
+- [x] Phase 11 — Streamlit (`app.py`; angka di kartu KPI tervalidasi headless)
+- [ ] Phase 12 — QA  <-- LANJUT DI SINI
 - [ ] Phase 13 — Deployment
 - [ ] Phase 14 — Portfolio version

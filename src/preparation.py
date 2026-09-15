@@ -673,7 +673,10 @@ def apply_reference_date(
         ],
         dtype="Int64",
     )
-    result.attrs["reference_date"] = pd.Timestamp(reference_date).normalize()
+    # Disimpan sebagai teks ISO, bukan Timestamp: Streamlit mencoba
+    # men-serialisasi df.attrs ke JSON saat menampilkan tabel, dan Timestamp
+    # membuatnya memunculkan peringatan setiap kali.
+    result.attrs["reference_date"] = str(pd.Timestamp(reference_date).normalize().date())
     return result
 
 

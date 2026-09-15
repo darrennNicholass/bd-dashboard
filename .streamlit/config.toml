@@ -1,0 +1,19 @@
+# Tema dashboard. Aman di-commit: tidak ada rahasia di sini.
+# Rahasia (URL spreadsheet, credential) tetap di .env / secrets.toml.
+
+[theme]
+base = "light"
+primaryColor = "#037EF3"          # biru AIESEC
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F6F8FB"
+textColor = "#1F2933"
+font = "sans-serif"
+
+[server]
+# Dashboard memuat nama partner dan nilai kontrak, dan tidak punya
+# autentikasi. Saat dijalankan lokal, jangan dengarkan alamat publik.
+address = "127.0.0.1"
+headless = true
+
+[browser]
+gatherUsageStats = false

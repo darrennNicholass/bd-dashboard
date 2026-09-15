@@ -209,12 +209,19 @@ def main() -> int:
           < 0.01)
     check("In-Kind per bulan: jumlah bar = total in-kind",
           abs(trace_sum(figures["In-Kind per bulan"]) - BASELINE["inkind_value"]) < 0.01)
-    check("Financial per partner: jumlah bar = total financial",
+    # Chart per partner hanya menampilkan sebagian teratas, jadi
+    # pembandingnya juga sebagian teratas — bukan totalnya.
+    top_n = 8
+    check(f"Financial per partner: jumlah bar = {top_n} partner teratas",
           abs(trace_sum(figures["Financial per partner"], "x")
-              - BASELINE["financial_revenue"]) < 0.01)
-    check("In-Kind per partner: jumlah bar = total in-kind",
+              - float(financial_partner.head(top_n)["amount"].sum())) < 0.01)
+    check(f"In-Kind per partner: jumlah bar = {top_n} partner teratas",
           abs(trace_sum(figures["In-Kind per partner"], "x")
-              - BASELINE["inkind_value"]) < 0.01)
+              - float(inkind_partner.head(top_n)["amount"].sum())) < 0.01)
+    check("chart per partner menyebut berapa dari berapa yang ditampilkan",
+          f"dari {len(inkind_partner)} partner"
+          in str((figures["In-Kind per partner"].layout.meta or {}).get("description")),
+          str((figures["In-Kind per partner"].layout.meta or {}).get("description")))
     check("Kelengkapan dokumen: ada + belum ada = partner aktif x 4 jenis",
           int(trace_sum(figures["Kelengkapan dokumen"]))
           == BASELINE["active_partners"] * len(preparation.DOCUMENT_FIELDS))
