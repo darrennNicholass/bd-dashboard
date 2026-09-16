@@ -31,11 +31,307 @@ Cara menjalankan:
 from __future__ import annotations
 
 import html
+import textwrap
 
 import pandas as pd
 import streamlit as st
 
 from src import charts, metrics, periods, preparation, sheets
+
+st.set_page_config(
+    page_title="BD Analytics — AIESEC in BINUS",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# =========================================================
+# ACCESS CONTROL
+# =========================================================
+
+if "access_mode" not in st.session_state:
+    st.session_state.access_mode = None
+
+
+# ---------- LANDING PAGE ----------
+# ---------- LANDING PAGE ----------
+# ---------- LANDING PAGE ----------
+# ---------- LANDING PAGE ----------
+if st.session_state.access_mode is None:
+
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;600;700;800&family=Manrope:wght@400;500;600;700&display=swap');
+
+        .stApp {
+            background:
+                radial-gradient(circle at 10% 15%, rgba(91,107,247,.22), transparent 35%),
+                radial-gradient(circle at 90% 80%, rgba(93,173,255,.18), transparent 35%),
+                linear-gradient(135deg, #E8EDFF 0%, #F7F9FF 48%, #FFFFFF 72%, #EDF4FF 100%);
+            min-height: 100vh;
+        }
+
+        html, body, [class*="st-"], button, input {
+            font-family: 'Manrope', sans-serif;
+        }
+
+        .block-container {
+            max-width: 1050px;
+            padding-top: 5rem;
+            padding-bottom: 3rem;
+        }
+
+        header[data-testid="stHeader"] {
+            background: transparent;
+        }
+
+        #MainMenu {
+            visibility: hidden;
+        }
+
+        footer {
+            visibility: hidden;
+        }
+
+        .landing-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            background: rgba(255,255,255,.7);
+            border: 1px solid rgba(91,107,247,.15);
+            border-radius: 999px;
+            color: #5362D8;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .1em;
+            box-shadow: 0 8px 25px rgba(47,59,140,.07);
+        }
+
+        .access-card {
+            min-height: 215px;
+            padding: 30px;
+            background: rgba(255,255,255,.82);
+            border: 1px solid rgba(255,255,255,.9);
+            border-radius: 25px;
+            box-shadow: 0 20px 55px rgba(42,54,125,.10);
+            backdrop-filter: blur(18px);
+        }
+
+        .access-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 50px;
+            height: 50px;
+            border-radius: 16px;
+            background: linear-gradient(135deg,#EEF1FF,#E0E6FF);
+            font-size: 22px;
+            margin-bottom: 18px;
+        }
+
+        div[data-testid="stButton"] > button {
+            height: 50px;
+            margin-top: 8px;
+            border-radius: 14px;
+            border: 1px solid rgba(91,107,247,.15);
+            background: rgba(255,255,255,.85);
+            color: #4655CE;
+            font-weight: 700;
+            box-shadow: 0 7px 20px rgba(53,65,150,.07);
+            transition: all .2s ease;
+        }
+
+        div[data-testid="stButton"] > button:hover {
+            transform: translateY(-2px);
+            background: linear-gradient(110deg,#5969EA,#7381FA);
+            color: white;
+            border-color: transparent;
+            box-shadow: 0 13px 28px rgba(77,92,220,.23);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ==========================
+    # HEADER
+    # ==========================
+
+    st.markdown(
+        '<p style="text-align:center; margin:0 0 20px 0;">'
+        '<span class="landing-badge">● &nbsp; AIESEC IN BINUS · BUSINESS DEVELOPMENT</span>'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<h1 style="'
+        "font-family:'DM Sans',sans-serif;"
+        'font-size:60px;'
+        'font-weight:800;'
+        'letter-spacing:-3px;'
+        'text-align:center;'
+        'color:#26358C;'
+        'margin:0 0 14px 0;'
+        '">'
+        'BD Analytics'
+        '</h1>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<p style="'
+        'text-align:center;'
+        'max-width:650px;'
+        'margin:0 auto 45px auto;'
+        'color:#75809B;'
+        'font-size:15px;'
+        'line-height:1.8;'
+        '">'
+        'A centralized analytics workspace for monitoring partnership '
+        'performance, market research, conversion, revenue, and document insights.'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+
+    # ==========================
+    # ACCESS CARDS
+    # ==========================
+
+    space1, public_col, member_col, space2 = st.columns(
+        [0.12, 1, 1, 0.12],
+        gap="medium",
+    )
+
+    # PUBLIC
+    with public_col:
+
+        public_html = (
+            '<div class="access-card">'
+            '<span class="access-icon">👤</span>'
+            '<h3 style="'
+            "font-family:'DM Sans',sans-serif;"
+            'color:#202C5C;'
+            'font-size:20px;'
+            'font-weight:700;'
+            'margin:0 0 9px 0;'
+            '">'
+            'Public Access'
+            '</h3>'
+            '<p style="'
+            'color:#7D87A1;'
+            'font-size:13px;'
+            'line-height:1.7;'
+            'margin:0;'
+            '">'
+            'Explore the portfolio version of BD Analytics. '
+            'Sensitive partnership information is automatically '
+            'anonymized for public viewing.'
+            '</p>'
+            '</div>'
+        )
+
+        st.markdown(
+            public_html,
+            unsafe_allow_html=True,
+        )
+
+        if st.button(
+            "Explore Dashboard  →",
+            use_container_width=True,
+            key="public_access",
+        ):
+            st.session_state.access_mode = "anonymous"
+            st.rerun()
+
+    # MEMBER
+    with member_col:
+
+        member_html = (
+            '<div class="access-card">'
+            '<span class="access-icon">🔐</span>'
+            '<h3 style="'
+            "font-family:'DM Sans',sans-serif;"
+            'color:#202C5C;'
+            'font-size:20px;'
+            'font-weight:700;'
+            'margin:0 0 9px 0;'
+            '">'
+            'AIESEC Member'
+            '</h3>'
+            '<p style="'
+            'color:#7D87A1;'
+            'font-size:13px;'
+            'line-height:1.7;'
+            'margin:0;'
+            '">'
+            'Sign in to access complete partnership metrics, '
+            'financial insights, contract information, '
+            'and internal document tracking.'
+            '</p>'
+            '</div>'
+        )
+
+        st.markdown(
+            member_html,
+            unsafe_allow_html=True,
+        )
+
+        if st.button(
+            "Member Login  →",
+            use_container_width=True,
+            key="member_access",
+        ):
+            st.session_state.access_mode = "login"
+            st.rerun()
+
+    st.markdown(
+        '<p style="'
+        'text-align:center;'
+        'color:#8F99B0;'
+        'font-size:11px;'
+        'margin-top:30px;'
+        '">'
+        '🟢 &nbsp; Internal partnership data is protected'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+
+    st.stop()
+
+# ---------- MEMBER LOGIN ----------
+if st.session_state.access_mode == "login":
+
+    st.title("🔐 AIESEC Member Access")
+
+    password = st.text_input(
+        "Enter member password",
+        type="password"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("Login", use_container_width=True):
+            if password == st.secrets["MEMBER_PASSWORD"]:
+                st.session_state.access_mode = "member"
+                st.rerun()
+            else:
+                st.error("Incorrect password.")
+
+    with col2:
+        if st.button("Back", use_container_width=True):
+            st.session_state.access_mode = None
+            st.rerun()
+
+    st.stop()
+
+
+# ---------- ACCESS STATUS ----------
+IS_MEMBER = st.session_state.access_mode == "member"
+
+def protected(value: str) -> str:
+    return value if IS_MEMBER else "XXX"
 
 # ---------------------------------------------------------------------------
 # Konfigurasi
@@ -63,13 +359,6 @@ KPI_COLORS = {
     "financial": "primary",
     "inkind": "blue",
 }
-
-st.set_page_config(
-    page_title="BD Analytics — AIESEC in BINUS",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -382,8 +671,11 @@ def kpi_row(data: dict) -> None:
     with columns[0]:
         st.metric(
             "Market Research",
-            number(summary["total_mr"]),
-            delta=f"{len(data['mr_by_pic'])} PIC terlibat",
+            protected(number(summary["total_mr"])),
+            delta=(
+            f"{len(data['mr_by_pic'])} PIC terlibat"
+            if IS_MEMBER
+            else "XXX PIC terlibat"),
             delta_color=KPI_COLORS["mr"],
             delta_arrow="off",
             border=True,
@@ -395,8 +687,11 @@ def kpi_row(data: dict) -> None:
     with columns[1]:
         st.metric(
             "Active Partners",
-            number(summary["active_partners"]),
-            delta=f"dari {number(summary['partner_count'])} partner",
+            protected(number(summary["active_partners"])),
+            delta=(
+            f"dari {number(summary['partner_count'])} partner"
+            if IS_MEMBER
+            else "dari XXX partner"),
             delta_color=KPI_COLORS["partner"],
             delta_arrow="off",
             border=True,
@@ -408,7 +703,7 @@ def kpi_row(data: dict) -> None:
     with columns[2]:
         st.metric(
             "Conversion Rate",
-            percent(summary["conversion_rate"]),
+            protected(percent(summary["conversion_rate"])),
             delta="tahap contract signed",
             delta_color=KPI_COLORS["conversion"],
             delta_arrow="off",
@@ -422,8 +717,11 @@ def kpi_row(data: dict) -> None:
     with columns[3]:
         st.metric(
             "Financial Revenue",
-            charts.rupiah_compact(summary["financial_revenue"]),
-            delta=f"{len(frame.df_financial)} pembayaran",
+            protected(charts.rupiah_compact(summary["financial_revenue"])),
+            delta=(
+            f"{len(frame.df_financial)} pembayaran"
+            if IS_MEMBER
+            else "XXX pembayaran"),
             delta_color=KPI_COLORS["financial"],
             delta_arrow="off",
             border=True,
@@ -435,8 +733,11 @@ def kpi_row(data: dict) -> None:
     with columns[4]:
         st.metric(
             "In-Kind Value",
-            charts.rupiah_compact(summary["inkind_value"]),
-            delta=f"{len(frame.df_inkind)} dukungan",
+            protected(charts.rupiah_compact(summary["inkind_value"])),
+            delta=(
+            f"{len(frame.df_inkind)} dukungan"
+            if IS_MEMBER
+            else "XXX dukungan"),
             delta_color=KPI_COLORS["inkind"],
             delta_arrow="off",
             border=True,
@@ -629,23 +930,34 @@ def tab_partner(data: dict) -> None:
     )
 
     with st.expander("Daftar partner aktif"):
-        active = metrics.get_active_partners(data["frame"].df_partner)
-        st.dataframe(
-            active[
-                ["partner_name", "stakeholder", "signed_month_raw", "end_month_raw",
-                 "months_remaining"]
-            ].rename(
-                columns={
-                    "partner_name": "Partner",
-                    "stakeholder": "Stakeholder",
-                    "signed_month_raw": "Mulai",
-                    "end_month_raw": "Berakhir",
-                    "months_remaining": "Sisa bulan",
-                }
-            ),
-            hide_index=True,
-            width="stretch",
-        )
+
+        if not IS_MEMBER:
+            st.info("🔒 Partner details are hidden in public mode.")
+
+        else:
+            active = metrics.get_active_partners(data["frame"].df_partner)
+
+            st.dataframe(
+                active[
+                    [
+                        "partner_name",
+                        "stakeholder",
+                        "signed_month_raw",
+                        "end_month_raw",
+                        "months_remaining",
+                    ]
+                ].rename(
+                    columns={
+                        "partner_name": "Partner",
+                        "stakeholder": "Stakeholder",
+                        "signed_month_raw": "Mulai",
+                        "end_month_raw": "Berakhir",
+                        "months_remaining": "Sisa bulan",
+                    }
+                ),
+                hide_index=True,
+                width="stretch",
+            )
 
 
 def tab_revenue(data: dict) -> None:
@@ -843,6 +1155,350 @@ def build_view_data(frame: periods.PeriodFrames, today: pd.Timestamp) -> dict:
         "watchlist": watchlist_rows(expiry_detail),
     }
 
+def mask_anonymous_data(data: dict) -> dict:
+    """
+    Membuat copy data yang aman untuk tampilan anonymous.
+
+    Data asli tidak diubah.
+    Nama partner/PIC dianonimkan dan nilai numerik diganti
+    dengan demo values agar layout/chart tetap terlihat.
+    """
+    import copy
+
+    masked = copy.deepcopy(data)
+
+    # =====================================================
+    # HELPER
+    # =====================================================
+
+    def demo_values(length: int, start: int = 10) -> list[int]:
+        """
+        Generate angka demo deterministic.
+        Tidak berasal dari nilai ESSM asli.
+        """
+        pattern = [12, 18, 15, 24, 20, 28, 23, 31, 26, 22, 17, 14]
+
+        return [
+            pattern[i % len(pattern)] + start
+            for i in range(length)
+        ]
+
+    def anonymize_names(df, column: str, prefix: str):
+        """Ganti nama asli dengan label anonymous."""
+        if df is None or df.empty or column not in df.columns:
+            return df
+
+        df = df.copy()
+
+        unique_names = df[column].dropna().astype(str).unique()
+
+        mapping = {
+            name: f"{prefix} {i:02d}"
+            for i, name in enumerate(unique_names, start=1)
+        }
+
+        df[column] = (
+            df[column]
+            .astype(str)
+            .map(mapping)
+            .fillna(f"{prefix} XX")
+        )
+
+        return df
+
+    def replace_numeric(df, columns):
+        """Ganti kolom numerik dengan demo values."""
+        if df is None or df.empty:
+            return df
+
+        df = df.copy()
+
+        for column in columns:
+            if column in df.columns:
+                df[column] = demo_values(len(df))
+
+        return df
+
+    # =====================================================
+    # SUMMARY / KPI
+    # =====================================================
+
+    summary = masked.get("summary", {})
+
+    if summary:
+        summary["total_mr"] = 30
+        summary["active_partners"] = 18
+        summary["partner_count"] = 30
+        summary["conversion_rate"] = 40.0
+        summary["financial_revenue"] = 10_000_000
+        summary["inkind_value"] = 5_000_000
+
+    # Nilai di atas hanya dummy untuk kebutuhan chart.
+    # Tulisan KPI tetap menjadi XXX karena protected().
+
+    # =====================================================
+    # MARKET RESEARCH
+    # =====================================================
+
+    mr_pic = masked.get("mr_by_pic")
+
+    if mr_pic is not None:
+        mr_pic = anonymize_names(
+            mr_pic,
+            "pic_aiesec",
+            "Anonymous"
+        )
+
+        mr_pic = replace_numeric(
+            mr_pic,
+            ["total_mr", "share_percent"]
+        )
+
+        masked["mr_by_pic"] = mr_pic
+
+
+    mr_month = masked.get("mr_by_month")
+
+    if mr_month is not None and not mr_month.empty:
+
+        mr_month = mr_month.copy()
+
+        if "total_mr" in mr_month.columns:
+            mr_month["total_mr"] = demo_values(
+                len(mr_month),
+                start=5
+            )
+
+        masked["mr_by_month"] = mr_month
+
+    # =====================================================
+    # ACTIVE PARTNER TREND
+    # =====================================================
+
+    trend = masked.get("active_trend")
+
+    if trend:
+        masked["active_trend"] = [
+            8, 10, 12, 11, 14, 16,
+            18, 17, 20, 21, 19, 22
+        ][:len(trend)]
+
+    # =====================================================
+    # STAKEHOLDER
+    # =====================================================
+
+    stakeholder = masked.get("stakeholder")
+
+    if stakeholder is not None and not stakeholder.empty:
+
+        stakeholder = stakeholder.copy()
+
+        numeric_columns = stakeholder.select_dtypes(
+            include="number"
+        ).columns
+
+        for column in numeric_columns:
+            stakeholder[column] = demo_values(
+                len(stakeholder),
+                start=3
+            )
+
+        masked["stakeholder"] = stakeholder
+
+    # =====================================================
+    # CONVERSION FUNNEL
+    # =====================================================
+
+    funnel = masked.get("funnel")
+
+    if funnel is not None and not funnel.empty:
+
+        funnel = funnel.copy()
+
+        numeric_columns = funnel.select_dtypes(
+            include="number"
+        ).columns
+
+        values = [50, 38, 27, 19, 12]
+
+        for column in numeric_columns:
+            funnel[column] = [
+                values[i % len(values)]
+                for i in range(len(funnel))
+            ]
+
+        masked["funnel"] = funnel
+
+    # =====================================================
+    # CONVERSION PER MONTH
+    # =====================================================
+
+    conversion = masked.get("conversion_monthly")
+
+    if conversion is not None and not conversion.empty:
+
+        conversion = conversion.copy()
+
+        if "conversion_rate" in conversion.columns:
+            conversion["conversion_rate"] = [
+                25, 30, 28, 35, 40, 38,
+                45, 42, 48, 44, 39, 41
+            ][:len(conversion)]
+
+        masked["conversion_monthly"] = conversion
+
+    # =====================================================
+    # FINANCIAL / IN-KIND MONTHLY
+    # =====================================================
+
+    for key in ["financial_monthly", "inkind_monthly"]:
+
+        df = masked.get(key)
+
+        if df is not None and not df.empty:
+
+            df = df.copy()
+
+            if "amount" in df.columns:
+                df["amount"] = [
+                    value * 100_000
+                    for value in demo_values(len(df))
+                ]
+
+            masked[key] = df
+
+    # =====================================================
+    # REVENUE PER PARTNER
+    # =====================================================
+
+    for key in ["financial_partner", "inkind_partner"]:
+
+        df = masked.get(key)
+
+        if df is not None and not df.empty:
+
+            df = anonymize_names(
+                df,
+                "partner_name",
+                "Partner"
+            )
+
+            numeric_columns = df.select_dtypes(
+                include="number"
+            ).columns
+
+            for column in numeric_columns:
+                df[column] = [
+                    value * 100_000
+                    for value in demo_values(len(df))
+                ]
+
+            masked[key] = df
+
+    # =====================================================
+    # WATCHLIST
+    # =====================================================
+
+    watchlist = masked.get("watchlist", [])
+
+    anonymous_watchlist = []
+
+    for i, row in enumerate(watchlist, start=1):
+
+        new_row = row.copy()
+
+        new_row["name"] = f"Partner {i:02d}"
+        new_row["meta"] = "Internal partnership · details hidden"
+        new_row["tag"] = "Hidden"
+
+        anonymous_watchlist.append(new_row)
+
+    masked["watchlist"] = anonymous_watchlist
+
+    # =====================================================
+    # DOCUMENT TRACKER
+    # =====================================================
+
+    tracker = masked.get("tracker")
+
+    if tracker is not None and not tracker.empty:
+
+        tracker = anonymize_names(
+            tracker,
+            "partner_name",
+            "Partner"
+        )
+
+        masked["tracker"] = tracker
+
+    # =====================================================
+    # EXPIRY DETAIL
+    # =====================================================
+
+    expiry = masked.get("expiry_detail")
+
+    if expiry is not None and not expiry.empty:
+
+        expiry = anonymize_names(
+            expiry,
+            "partner_name",
+            "Partner"
+        )
+
+        # Jangan tampilkan bulan kontrak asli
+        if "end_month_raw" in expiry.columns:
+            expiry["end_month_raw"] = "Hidden"
+
+        if "months_remaining" in expiry.columns:
+            expiry["months_remaining"] = 3
+
+        masked["expiry_detail"] = expiry
+
+    # =====================================================
+    # EXPIRY SUMMARY
+    # =====================================================
+
+    expiry_summary = masked.get("expiry_summary")
+
+    if expiry_summary is not None and not expiry_summary.empty:
+
+        expiry_summary = expiry_summary.copy()
+
+        numeric_columns = expiry_summary.select_dtypes(
+            include="number"
+        ).columns
+
+        for column in numeric_columns:
+            expiry_summary[column] = demo_values(
+                len(expiry_summary),
+                start=2
+            )
+
+        masked["expiry_summary"] = expiry_summary
+
+    # =====================================================
+    # DOCUMENT COMPLETENESS
+    # =====================================================
+
+    completeness = masked.get("completeness")
+
+    if completeness is not None and not completeness.empty:
+
+        completeness = completeness.copy()
+
+        numeric_columns = completeness.select_dtypes(
+            include="number"
+        ).columns
+
+        for column in numeric_columns:
+            completeness[column] = demo_values(
+                len(completeness),
+                start=4
+            )
+
+        masked["completeness"] = completeness
+
+    return masked
 
 # ---------------------------------------------------------------------------
 # Main
@@ -867,6 +1523,9 @@ def main() -> None:
 
     frame = periods.apply_period(selection, today=today, **frames)
     data = build_view_data(frame, today)
+    # Anonymous tidak menerima data asli untuk visualisasi
+    if not IS_MEMBER:
+        data = mask_anonymous_data(data)
 
     header(frame, pd.Timestamp.now())
     kpi_row(data)
