@@ -193,15 +193,22 @@ def _style(
 
     fig.update_xaxes(
         showgrid=False, zeroline=False, showline=False, ticks="",
+        # fixedrange mematikan lapisan "drag" Plotly di tepi sumbu. Lapisan
+        # itulah yang memunculkan kursor ew-resize / ns-resize saat mouse
+        # melewati grafik - padahal dashboard ini tidak pernah memakai
+        # zoom/pan (modebar juga sudah disembunyikan di app.py).
+        fixedrange=True,
         title_font={"size": LABEL_FONT_SIZE, "color": COLOR_SUBTEXT},
         tickfont={"size": LABEL_FONT_SIZE, "color": COLOR_SUBTEXT},
     )
     fig.update_yaxes(
         gridcolor=COLOR_GRID, zeroline=False, showline=False, ticks="",
+        fixedrange=True,
         title_font={"size": LABEL_FONT_SIZE, "color": COLOR_SUBTEXT},
         tickfont={"size": LABEL_FONT_SIZE, "color": COLOR_SUBTEXT},
     )
-    fig.update_layout(meta={"description": description or title or ""})
+    # dragmode=False membuang kursor "crosshair"/geser di area plot.
+    fig.update_layout(dragmode=False, meta={"description": description or title or ""})
     return fig
 
 
@@ -847,6 +854,76 @@ def document_tracker_heatmap(
     if description is None:
         description = f"{len(df_tracker)} partner aktif Â· v = dokumen ada"
     return _style(fig, title, description, height=max(240, 22 * len(df_tracker) + 90))
+
+
+# ---------------------------------------------------------------------------
+# Post-partnership (Partnership Survey & Partnership Report)
+# ---------------------------------------------------------------------------
+
+
+def post_partnership_bar(
+    df_completeness: pd.DataFrame,
+    title: str | None = "Post-partnership completion",
+    description: str | None = None,
+    height: int | None = 200,
+) -> go.Figure:
+    """Bar Completed vs Missing untuk Partnership Survey & Partnership Report.
+
+    Penyebutnya hanya partnership yang SUDAH berakhir, jadi tinggi total
+    setiap batang sama dengan jumlah partnership selesai - punya arti,
+    sehingga barmode='stack' dibolehkan di sini.
+
+    Args:
+        df_completeness: hasil metrics.get_post_partnership_completeness(),
+            kolom requirement, completed, missing.
+    """
+    if df_completeness is None or df_completeness.empty:
+        return _empty_figure(
+            title,
+            "Belum ada partnership yang berakhir pada periode ini",
+            height=height,
+        )
+
+    _require_columns(
+        df_completeness,
+        ("requirement", "completed", "missing"),
+        "df post-partnership",
+    )
+
+    labels = [str(value) for value in df_completeness["requirement"]]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=df_completeness["completed"], y=labels, name="Completed",
+            orientation="h",
+            marker_color=COLOR_POSITIVE,
+            text=[value if value else "" for value in df_completeness["completed"]],
+            textposition="inside", insidetextanchor="middle",
+            textfont={"size": LABEL_FONT_SIZE, "color": "#FFFFFF"},
+            hovertemplate="%{y} completed: %{x} partner<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=df_completeness["missing"], y=labels, name="Missing",
+            orientation="h",
+            marker_color=COLOR_MUTED,
+            text=[value if value else "" for value in df_completeness["missing"]],
+            textposition="inside", insidetextanchor="middle",
+            textfont={"size": LABEL_FONT_SIZE, "color": COLOR_TEXT},
+            hovertemplate="%{y} missing: %{x} partner<extra></extra>",
+        )
+    )
+    fig.update_layout(barmode="stack", showlegend=True, bargap=0.45)
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(
+        gridcolor="rgba(0,0,0,0)", autorange="reversed",
+        tickfont={"size": LABEL_FONT_SIZE, "color": COLOR_TEXT},
+    )
+    if description is None:
+        description = "Hanya partnership yang sudah berakhir"
+    return _style(fig, title, description, height=height)
 
 
 # ---------------------------------------------------------------------------

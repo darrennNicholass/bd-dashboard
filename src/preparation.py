@@ -1120,3 +1120,546 @@ def build_df_conversion(grid: list[list[str]] | None = None) -> pd.DataFrame:
             )
 
     return pd.DataFrame(rows)
+
+
+
+# ===========================================================================
+# PENCOCOKAN NAMA PARTNER (dipakai lintas sheet)
+# ===========================================================================
+#
+# Nama partner adalah SATU-SATUNYA kunci yang tersedia untuk menghubungkan
+# National_1.1 (sumber tanggal akhir partnership), National_1.2 (Post-
+# Partnership Report), dan PSC (Partnership Survey). Tidak ada ID partner.
+#
+# Karena itu pencocokan dibuat toleran terhadap perbedaan penulisan yang
+# TERBUKTI ada di sumber, tanpa menjadi fuzzy matching agresif:
+#
+#   National_1.1            National_1.2 / PSC
+#   ----------------------  --------------------------------
+#   "Gen Z Outfit"          "GenZ Outfit Official"
+#   "Hangry"                "Hangry Indonesia"
+#   "Mandaya Hospital"      "Mandaya Royal Hospital Puri"
+#   "PT Paragon Corp"       "Paragon corp"
+#   "Jiwater"               "Ji Water (PT.Panca Tirta Prigen)"
+#   "BumiBaik"              "Bumibaik"
+#
+# ATURAN PENCOCOKAN - berurutan dari bukti terkuat ke terlemah:
+#   1. Nama ternormalisasi identik.
+#   2. Nama tanpa spasi/tanda baca identik  -> menangani "Gen Z" vs "GenZ".
+#   3. Nama tanpa spasi salah satu memuat yang lain, minimal
+#      PARTNER_MATCH_MIN_SQUASH karakter -> menangani "Jiwater" di dalam
+#      "Ji Water (PT Panca Tirta Prigen)".
+#   4. Kumpulan kata penting salah satu adalah himpunan bagian dari yang
+#      lain -> menangani "Mandaya Hospital" di "Mandaya Royal Hospital Puri".
+#
+# YANG SENGAJA TIDAK DIPAKAI: jarak Levenshtein / rasio kemiripan. Itu bisa
+# menyatukan dua partner berbeda (mis. "DMAC Chicken Gunung Sahari" dengan
+# "DMAC Chicken Crunch") dan kesalahan seperti itu sulit terlihat di
+# dashboard. Lebih baik satu partner tidak ketemu daripada dua partner
+# tertukar.
+# ---------------------------------------------------------------------------
+
+# Kata yang tidak membedakan identitas perusahaan. Dibuang sebelum
+# membandingkan kumpulan kata, supaya "PT Paragon Corp" dan "Paragon corp"
+# sama-sama tinggal {"paragon"}.
+PARTNER_NAME_GENERIC_TOKENS = frozenset(
+    {
+        "pt", "cv", "tbk", "persero", "pte", "plc",
+        "inc", "ltd", "llc", "co", "corp", "corporation", "company",
+        "group", "holding", "holdings", "grup",
+        "indonesia", "official", "the", "and", "dan",
+    }
+)
+
+# Panjang minimal untuk aturan 3. Di bawah ini, potongan nama terlalu pendek
+# untuk dipakai sebagai bukti (mis. "cove", "beex", "bca").
+PARTNER_MATCH_MIN_SQUASH = 5
+
+# Panjang minimal gabungan kata penting untuk aturan 4, supaya kata pendek
+# seperti "se" atau "pik" tidak pernah dipakai sebagai satu-satunya bukti.
+PARTNER_MATCH_MIN_TOKEN_TEXT = 4
+
+# Semua yang bukan huruf/angka dianggap pemisah kata: titik, koma, apostrof,
+# tanda kurung, dan garis miring semuanya muncul di nama partner di sumber.
+_NON_ALNUM = re.compile(r"[^0-9a-z]+")
+
+
+def normalize_partner_name(value) -> str:
+    """Bentuk baku nama partner: huruf kecil, tanpa tanda baca, spasi rapat.
+
+    "  PT. Paragon  Corp " -> "pt paragon corp"
+    """
+    text = clean_text(value).casefold()
+    if not text:
+        return ""
+    return " ".join(_NON_ALNUM.sub(" ", text).split())
+
+
+def squash_partner_name(value) -> str:
+    """Nama partner tanpa spasi sama sekali: "Gen Z Outfit" -> "genzoutfit"."""
+    return normalize_partner_name(value).replace(" ", "")
+
+
+def partner_name_tokens(value) -> frozenset[str]:
+    """Kumpulan kata PENTING pada nama partner.
+
+    Kata generik (PT, Corp, Group, Indonesia, ...) dibuang. Kalau setelah
+    dibuang tidak ada kata yang tersisa - misalnya nama partner hanya
+    "PT Indonesia" - seluruh kata dikembalikan apa adanya, supaya nama itu
+    tidak berubah menjadi kunci kosong yang cocok dengan segalanya.
+    """
+    tokens = normalize_partner_name(value).split()
+    if not tokens:
+        return frozenset()
+    significant = [token for token in tokens if token not in PARTNER_NAME_GENERIC_TOKENS]
+    return frozenset(significant or tokens)
+
+
+def partner_names_match(left, right) -> bool:
+    """True kalau kedua nama menunjuk partner yang sama.
+
+    Lihat ATURAN PENCOCOKAN di komentar section ini. Fungsi ini simetris:
+    partner_names_match(a, b) selalu sama dengan partner_names_match(b, a).
+    """
+    left_norm = normalize_partner_name(left)
+    right_norm = normalize_partner_name(right)
+    if not left_norm or not right_norm:
+        return False
+
+    # 1. identik setelah normalisasi
+    if left_norm == right_norm:
+        return True
+
+    left_squash = left_norm.replace(" ", "")
+    right_squash = right_norm.replace(" ", "")
+
+    # 2. identik setelah spasi dibuang
+    if left_squash == right_squash:
+        return True
+
+    # 3. salah satu memuat yang lain, dengan panjang minimal
+    shorter, longer = sorted((left_squash, right_squash), key=len)
+    if len(shorter) >= PARTNER_MATCH_MIN_SQUASH and shorter in longer:
+        return True
+
+    # 4. kumpulan kata penting: himpunan bagian
+    left_tokens = partner_name_tokens(left)
+    right_tokens = partner_name_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    smaller = left_tokens if len(left_tokens) <= len(right_tokens) else right_tokens
+    bigger = right_tokens if smaller is left_tokens else left_tokens
+    if not smaller <= bigger:
+        return False
+    return len("".join(sorted(smaller))) >= PARTNER_MATCH_MIN_TOKEN_TEXT
+
+
+def match_partner_name(name, candidates) -> str | None:
+    """Cari satu nama pada daftar kandidat. Kembalikan nama kandidat aslinya.
+
+    Kandidat diurutkan lebih dulu: yang paling mirip panjangnya dengan nama
+    yang dicari diperiksa lebih awal, jadi kalau ada dua kandidat yang
+    sama-sama lolos aturan, yang dipilih adalah yang paling dekat - bukan
+    yang kebetulan berada di baris paling atas.
+
+    Returns:
+        Nama kandidat yang cocok, atau None kalau tidak ada.
+    """
+    target = normalize_partner_name(name)
+    if not target:
+        return None
+
+    ordered = sorted(
+        (str(candidate) for candidate in candidates if clean_text(candidate)),
+        key=lambda candidate: (
+            abs(len(normalize_partner_name(candidate)) - len(target)),
+            normalize_partner_name(candidate),
+        ),
+    )
+    for candidate in ordered:
+        if partner_names_match(target, candidate):
+            return candidate
+    return None
+
+
+# ===========================================================================
+# NATIONAL 1.2 - POST-PARTNERSHIP REPORT
+# ===========================================================================
+#
+# ATURAN BISNIS - hasil inspeksi struktur sheet, bukan asumsi
+# ---------------------------------------------------------------------------
+# 1. Header BERLAPIS EMPAT:
+#       baris 1 : NO, PARTNER'S NAME, STAKEHODLER GROUPING, PIC FROM AIESEC,
+#                 STATUS (for Continued Partner), Partnership Period,
+#                 During-Experience Partnership Flow, Post-Experience
+#       baris 2 : A. Deals Implementation, B. Partner Engagement,
+#                 A. Partnership Survey
+#       baris 3 : Active/Break/Finish, Start/End, 1. SnD Implementation,
+#                 2. Event/Program Finished, Post-Partnership Survey, ...
+#       baris 4 : Name/Email/Phone dan label "Link"
+#
+# 2. Kolom DOKUMEN laporan berlabel "Link" dan tidak punya nama sendiri di
+#    baris 1-3. Dikenali lewat posisi: kolom "Link" PERTAMA setelah tahap
+#    "2. Event/Program Finished". Isinya nama/berkas laporan, contoh:
+#       "Hangry - Post-Partnership Report.pdf"
+#       "Kawan Lama Group - Booklet Partnership Report 2627 (1).pdf"
+#
+# 3. Baris dianggap RECORD kalau kolom NO berisi angka murni DAN nama
+#    partner terisi. Ini membuang baris penanda bulan ("(emoji)february"),
+#    baris "Summary Semester #1"/"Summary Quarter #1", baris rekap
+#    stakeholder, dan baris nomor kosong yang memang banyak di sheet ini.
+#
+# 4. KEHADIRAN NAMA PARTNER DI SHEET INI BUKAN BUKTI LAPORAN SUDAH ADA.
+#    Terbukti di data: "Kinsuke Ramen" tercatat sebagai record lengkap
+#    tetapi kolom Link-nya kosong, sedangkan lima partner lain punya berkas
+#    laporan. Jadi indikator yang dipakai adalah ISI KOLOM LINK
+#    (has_report), bukan sekadar "nama ditemukan" - keduanya tetap dibawa
+#    sebagai kolom terpisah supaya bisa diaudit.
+#
+# 5. Kolom "Post-Partnership Survey" di sheet ini ikut dibawa sebagai
+#    catatan, tetapi status survey di dashboard DIAMBIL DARI PSC, karena
+#    PSC adalah sumber jawaban surveinya.
+# ---------------------------------------------------------------------------
+
+# Baris yang memuat nama kolom di National_1.2 (1-based).
+REPORT_HEADER_ROWS = (1, 2, 3, 4)
+
+# Label yang dicari, sudah dinormalisasi (huruf kecil, spasi rapat).
+REPORT_LABELS: dict[str, str] = {
+    "no": "no",
+    "partner_name": "partner's name",
+    "stakeholder": "stakehodler grouping",  # typo memang ada di sumber
+    "pic_aiesec": "pic from aiesec",
+    "status_continued": "status (for continued partner)",
+    "period_start": "start",
+    "period_end": "end",
+    "snd_implementation": "1. snd implementation",
+    "event_finished": "2. event/program finished",
+    "survey_flag": "post-partnership survey",
+}
+
+# Tahap acuan untuk menemukan kolom "Link" berisi laporan (lihat aturan 2).
+REPORT_LINK_AFTER_LABEL = "2. event/program finished"
+REPORT_LINK_LABEL = "link"
+
+
+def load_report_grid() -> list[list[str]] | None:
+    """Baca National_1.2 dari mirror. None kalau tabnya tidak ada."""
+    return sheets.try_read_national_values(sheets.NATIONAL_REPORT_WORKSHEET)
+
+
+def _report_label_positions(grid: list[list[str]]) -> dict[str, list[int]]:
+    """Petakan label header National_1.2 (baris 1-4) ke daftar index kolomnya."""
+    positions: dict[str, list[int]] = {}
+    for row_number in REPORT_HEADER_ROWS:
+        row_index = row_number - 1
+        if row_index >= len(grid):
+            continue
+        for col_index, raw in enumerate(grid[row_index]):
+            label = normalize_header(raw)
+            if label:
+                positions.setdefault(label, []).append(col_index)
+    return positions
+
+
+def resolve_report_columns(grid: list[list[str]]) -> dict[str, int]:
+    """Cari index kolom National_1.2 dari header berlapis empat.
+
+    Raises:
+        KeyError kalau ada kolom wajib yang tidak ditemukan. Sengaja gagal
+        keras: lebih baik section post-partnership menampilkan pesan error
+        yang jelas daripada melaporkan "Missing" untuk semua partner karena
+        membaca kolom yang salah.
+    """
+    positions = _report_label_positions(grid)
+    resolved: dict[str, int] = {}
+    missing: list[str] = []
+
+    for field, label in REPORT_LABELS.items():
+        found = positions.get(label)
+        if not found:
+            missing.append(f"{field} (label dicari: {label!r})")
+            continue
+        resolved[field] = found[0]
+
+    anchor = resolved.get("event_finished")
+    if anchor is not None:
+        after = [col for col in sorted(positions.get(REPORT_LINK_LABEL, [])) if col > anchor]
+        if after:
+            resolved["report_link"] = after[0]
+        else:
+            missing.append(
+                f"kolom dokumen laporan ({REPORT_LINK_LABEL!r} setelah "
+                f"{REPORT_LINK_AFTER_LABEL!r})"
+            )
+
+    if missing:
+        raise KeyError("Kolom National_1.2 tidak ditemukan: " + "; ".join(missing))
+    return resolved
+
+
+def extract_report_records(grid: list[list[str]]) -> list[dict]:
+    """Ambil baris record Post-Partnership Report dari National_1.2."""
+    columns = resolve_report_columns(grid)
+
+    records: list[dict] = []
+    current_month: str | None = None
+
+    for row_index in range(len(grid)):
+        no_value = cell(grid, row_index, columns["no"])
+
+        marker_month = month_in_cell(no_value)
+        if marker_month is not None:
+            current_month = marker_month
+            continue
+
+        partner_value = cell(grid, row_index, columns["partner_name"])
+        if not (is_record_number(no_value) and has_value(partner_value)):
+            continue
+
+        report_raw = clean_text(cell(grid, row_index, columns["report_link"]))
+        survey_flag_raw = clean_text(cell(grid, row_index, columns["survey_flag"]))
+
+        records.append(
+            {
+                "partner_name": clean_text(partner_value),
+                "stakeholder": clean_text(cell(grid, row_index, columns["stakeholder"])),
+                "pic_aiesec": clean_text(cell(grid, row_index, columns["pic_aiesec"]))
+                or None,
+                "status_continued": clean_text(
+                    cell(grid, row_index, columns["status_continued"])
+                )
+                or None,
+                "period_start_raw": clean_text(
+                    cell(grid, row_index, columns["period_start"])
+                )
+                or None,
+                "period_end_raw": clean_text(cell(grid, row_index, columns["period_end"]))
+                or None,
+                "snd_implementation": clean_text(
+                    cell(grid, row_index, columns["snd_implementation"])
+                ).upper()
+                == "TRUE",
+                "event_finished": clean_text(
+                    cell(grid, row_index, columns["event_finished"])
+                ).upper()
+                == "TRUE",
+                "report_link_raw": report_raw or None,
+                # Indikator yang dipakai dashboard (lihat aturan 4).
+                "has_report": has_document(report_raw),
+                "survey_flag_raw": survey_flag_raw or None,
+                "survey_flag": survey_flag_raw.upper() == "TRUE",
+                "month": current_month,
+                "source_row": row_index + 1,
+            }
+        )
+
+    return records
+
+
+def build_df_report(grid: list[list[str]] | None = None) -> pd.DataFrame:
+    """Bangun df_report dari National_1.2 (Post-Partnership Report).
+
+    Args:
+        grid: raw values National_1.2. Kalau None, dibaca dari mirror.
+
+    Returns:
+        DataFrame kolom: partner_name, partner_key, stakeholder, pic_aiesec,
+        status_continued, period_start_raw, period_end_raw,
+        snd_implementation, event_finished, report_link_raw, has_report,
+        survey_flag_raw, survey_flag, month, source_row.
+
+        DataFrame KOSONG (tanpa kolom) kalau tab tidak ada atau tidak punya
+        satu pun record - pemanggil membedakannya lewat df.empty.
+    """
+    if grid is None:
+        grid = load_report_grid()
+    if not grid:
+        return pd.DataFrame()
+
+    df = pd.DataFrame.from_records(extract_report_records(grid))
+    if df.empty:
+        return pd.DataFrame()
+
+    df["partner_key"] = df["partner_name"].map(normalize_partner_name)
+    df["month"] = pd.Categorical(
+        df["month"], categories=list(TERM_MONTH_ORDER), ordered=True
+    )
+    return df.sort_values(["month", "source_row"]).reset_index(drop=True)
+
+
+# ===========================================================================
+# PSC - PARTNERSHIP SURVEY
+# ===========================================================================
+#
+# ATURAN BISNIS - hasil inspeksi struktur sheet
+# ---------------------------------------------------------------------------
+# 1. PSC adalah hasil Google Form: satu baris = satu responden, bukan satu
+#    baris = satu partner. Satu partner bisa mengisi lebih dari sekali.
+#
+# 2. Baris 1 hanya judul ("AIESEC in BINUS"). Header pertanyaan ada di baris
+#    berikutnya dan dikenali dari sel "Timestamp", bukan dari nomor baris
+#    tetap - kalau BD menambah baris judul, parser tidak ikut rusak.
+#
+# 3. Nama perusahaan ada di kolom pertanyaan "What is the institution/company
+#    that you represent?". Kolom dicari lewat KATA KUNCI pada pertanyaannya,
+#    karena teks pertanyaan Google Form panjang dan mudah diedit.
+#
+# 4. Baris rekap (persentase "Summary" di kolom kanan) tidak punya nama
+#    perusahaan, jadi otomatis tersaring oleh aturan "nama perusahaan
+#    harus terisi".
+#
+# 5. Nama perusahaan di sini ditulis versi responden, bukan versi ESSM
+#    ("GenZ Outfit Official" vs "Gen Z Outfit"). Penghubungnya adalah
+#    partner_names_match() di section sebelumnya.
+# ---------------------------------------------------------------------------
+
+# Baris maksimal yang diperiksa saat mencari baris header.
+SURVEY_HEADER_SEARCH_ROWS = 6
+
+SURVEY_TIMESTAMP_LABEL = "timestamp"
+
+# Kata kunci pertanyaan. Dicari sebagai substring pada header ternormalisasi.
+SURVEY_PARTNER_KEYWORDS: tuple[str, ...] = ("institution/company", "institution", "company")
+SURVEY_RESPONDENT_KEYWORDS: tuple[str, ...] = ("what is your name", "your name")
+
+# Format timestamp Google Form di sheet ini: "6/19/2026 14:40:20".
+SURVEY_TIMESTAMP_FORMATS: tuple[str, ...] = (
+    "%m/%d/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M:%S",
+    "%m/%d/%Y",
+    "%d/%m/%Y",
+)
+
+
+def load_survey_grid() -> list[list[str]] | None:
+    """Baca PSC dari mirror. None kalau tabnya tidak ada."""
+    return sheets.try_read_national_values(sheets.NATIONAL_SURVEY_WORKSHEET)
+
+
+def _first_column_containing(
+    header: list[str], keywords: tuple[str, ...]
+) -> int | None:
+    """Index kolom pertama yang header-nya memuat salah satu kata kunci."""
+    normalized = [normalize_header(value) for value in header]
+    for keyword in keywords:
+        for col_index, label in enumerate(normalized):
+            if keyword in label:
+                return col_index
+    return None
+
+
+def resolve_survey_columns(grid: list[list[str]]) -> dict[str, int]:
+    """Cari baris header dan index kolom PSC.
+
+    Returns:
+        dict dengan kunci: header_row (0-based), partner_name, dan - kalau
+        ada - timestamp serta respondent.
+
+    Raises:
+        KeyError kalau baris header atau kolom nama perusahaan tidak ada.
+    """
+    header_row: int | None = None
+    for row_index in range(min(SURVEY_HEADER_SEARCH_ROWS, len(grid))):
+        labels = [normalize_header(value) for value in grid[row_index]]
+        if SURVEY_TIMESTAMP_LABEL in labels:
+            header_row = row_index
+            break
+
+    if header_row is None:
+        raise KeyError(
+            "Baris header PSC tidak ditemukan: tidak ada sel "
+            f"{SURVEY_TIMESTAMP_LABEL!r} pada "
+            f"{SURVEY_HEADER_SEARCH_ROWS} baris pertama."
+        )
+
+    header = grid[header_row]
+    partner_column = _first_column_containing(header, SURVEY_PARTNER_KEYWORDS)
+    if partner_column is None:
+        raise KeyError(
+            "Kolom nama perusahaan di PSC tidak ditemukan (kata kunci dicari: "
+            f"{', '.join(SURVEY_PARTNER_KEYWORDS)})."
+        )
+
+    resolved = {"header_row": header_row, "partner_name": partner_column}
+
+    timestamp_column = _first_column_containing(header, (SURVEY_TIMESTAMP_LABEL,))
+    if timestamp_column is not None:
+        resolved["timestamp"] = timestamp_column
+
+    respondent_column = _first_column_containing(header, SURVEY_RESPONDENT_KEYWORDS)
+    if respondent_column is not None:
+        resolved["respondent"] = respondent_column
+
+    return resolved
+
+
+def parse_survey_timestamp(value: str | None):
+    """Urai timestamp Google Form. NaT kalau tidak cocok format apa pun."""
+    text = clean_text(value or "")
+    if not text:
+        return pd.NaT
+    for timestamp_format in SURVEY_TIMESTAMP_FORMATS:
+        try:
+            parsed = pd.to_datetime(text, format=timestamp_format)
+        except (ValueError, TypeError):
+            continue
+        if parsed is not pd.NaT and not pd.isna(parsed):
+            return parsed
+    return pd.NaT
+
+
+def extract_survey_records(grid: list[list[str]]) -> list[dict]:
+    """Ambil respons survey dari PSC. Satu dict = satu responden."""
+    columns = resolve_survey_columns(grid)
+    header_row = columns["header_row"]
+
+    records: list[dict] = []
+    for row_index in range(header_row + 1, len(grid)):
+        partner_value = cell(grid, row_index, columns["partner_name"])
+        if not has_value(partner_value):
+            continue
+
+        record = {
+            "partner_name": clean_text(partner_value),
+            "respondent": None,
+            "submitted_at_raw": None,
+            "source_row": row_index + 1,
+        }
+        if "respondent" in columns:
+            record["respondent"] = (
+                clean_text(cell(grid, row_index, columns["respondent"])) or None
+            )
+        if "timestamp" in columns:
+            record["submitted_at_raw"] = (
+                clean_text(cell(grid, row_index, columns["timestamp"])) or None
+            )
+        records.append(record)
+
+    return records
+
+
+def build_df_survey(grid: list[list[str]] | None = None) -> pd.DataFrame:
+    """Bangun df_survey dari PSC (Partnership Survey).
+
+    Args:
+        grid: raw values PSC. Kalau None, dibaca dari mirror.
+
+    Returns:
+        DataFrame kolom: partner_name, partner_key, respondent,
+        submitted_at, submitted_at_raw, source_row.
+
+        DataFrame KOSONG kalau tab tidak ada atau belum ada satu pun respons.
+    """
+    if grid is None:
+        grid = load_survey_grid()
+    if not grid:
+        return pd.DataFrame()
+
+    df = pd.DataFrame.from_records(extract_survey_records(grid))
+    if df.empty:
+        return pd.DataFrame()
+
+    df["partner_key"] = df["partner_name"].map(normalize_partner_name)
+    df["submitted_at"] = df["submitted_at_raw"].map(parse_survey_timestamp)
+    return df.sort_values("source_row").reset_index(drop=True)

@@ -33,6 +33,34 @@ ATURAN BISNIS KPI - lanjutan dari Phase 3-7
 
 6. Expiry Tracker berbasis BULAN, karena sumber (Month End) hanya
    memberi level bulan.
+
+7. POST-PARTNERSHIP (Partnership Survey & Partnership Report) memakai
+   pembagian berbasis BULAN, bukan tanggal harian:
+
+       BELUM WAJIB : end_month >  bulan acuan
+       SUDAH WAJIB : end_month <= bulan acuan
+
+   Alasan memakai bulan: sumber hanya memberi "Month End" setingkat bulan
+   ("SEP 26"), dan tanggal hariannya adalah asumsi akhir bulan yang dibuat
+   dashboard - bukan fakta dari sheet. Memakai perbandingan harian membuat
+   partner yang berakhir BULAN INI tampil "Not Required Yet" sampai hari
+   terakhir bulan itu, padahal laporannya sudah disiapkan. Keputusan tim
+   BD: begitu bulan berakhir tiba, Partnership Report & Survey sudah
+   ditagih.
+
+   Partner yang bulan berakhirnya belum tiba berstatus "Not Required Yet"
+   dan tidak pernah masuk penyebut persentase. Partner tanpa Month End
+   tidak bisa dinilai sama sekali, jadi berstatus "No End Date" dan juga
+   tidak ikut dihitung.
+
+   Catatan: status AKTIF (KPI Active Partners) tetap memakai aturan lama
+   end_month >= bulan acuan, jadi partner di bulan terakhirnya memang
+   muncul sekaligus sebagai partner aktif DAN sebagai laporan yang sudah
+   ditagih. Itu memang keadaan yang sebenarnya terjadi.
+
+8. Satu partner dihitung SEKALI. df_partner bisa memuat nama yang sama
+   lebih dari satu baris (mis. re-raise), jadi baris didedupe memakai nama
+   ternormalisasi sebelum metrik post-partnership dihitung.
 """
 
 from __future__ import annotations
@@ -44,6 +72,8 @@ from .preparation import (
     DOCUMENT_FIELDS,
     FUNNEL_STAGES,
     TERM_MONTH_ORDER,
+    match_partner_name,
+    normalize_partner_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -74,6 +104,50 @@ EXPIRY_CATEGORIES: tuple[str, ...] = (
 # Nama yang dipakai kalau kolom stakeholder kosong di sumber. Lebih jujur
 # daripada label kosong yang tidak terbaca di grafik.
 STAKEHOLDER_UNKNOWN = "(tidak diisi)"
+
+
+# ---------------------------------------------------------------------------
+# Konstanta post-partnership
+# ---------------------------------------------------------------------------
+
+# Status dokumen post-partnership. Sengaja bahasa Inggris supaya sama dengan
+# label yang dipakai tim BD di sheet dan di UI.
+POST_STATUS_COMPLETED = "Completed"
+POST_STATUS_MISSING = "Missing"
+POST_STATUS_NOT_REQUIRED = "Not Required Yet"
+POST_STATUS_NO_END_DATE = "No End Date"
+# Sumbernya tidak bisa dibaca. BEDA dari "Missing": kalau sheet-nya gagal
+# dibaca, kita tidak tahu dokumennya ada atau tidak - melaporkan "Missing"
+# akan membuat tim menagih partner yang sebenarnya sudah mengumpulkan.
+POST_STATUS_UNAVAILABLE = "Data Unavailable"
+
+POST_STATUSES: tuple[str, ...] = (
+    POST_STATUS_COMPLETED,
+    POST_STATUS_MISSING,
+    POST_STATUS_NOT_REQUIRED,
+    POST_STATUS_NO_END_DATE,
+    POST_STATUS_UNAVAILABLE,
+)
+
+# Kunci sumber yang bisa dilaporkan tidak tersedia oleh pemanggil.
+POST_SOURCE_SURVEY = "survey"
+POST_SOURCE_REPORT = "report"
+
+# Dua kewajiban post-partnership yang dilacak.
+# (nama kolom status, label tampilan, kunci sumber)
+POST_REQUIREMENTS: tuple[tuple[str, str, str], ...] = (
+    ("survey_status", "Partnership Survey", POST_SOURCE_SURVEY),
+    ("report_status", "Partnership Report", POST_SOURCE_REPORT),
+)
+
+# Ambang urgensi kartu "segera berakhir", dalam HARI. Dipakai untuk memilih
+# penekanan visual, bukan untuk menyaring baris.
+EXPIRY_CRITICAL_DAYS = 7
+EXPIRY_WARNING_DAYS = 30
+
+URGENCY_CRITICAL = "critical"   # 0-7 hari
+URGENCY_WARNING = "warning"     # 8-30 hari
+URGENCY_NORMAL = "normal"       # lebih dari 30 hari
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +630,602 @@ def get_expiry_summary(
         for category in EXPIRY_CATEGORIES
     ]
     return pd.DataFrame(rows, columns=columns)
+
+
+# ---------------------------------------------------------------------------
+# KPI 10 — Post-partnership: Partnership Survey & Partnership Report
+# ---------------------------------------------------------------------------
+
+
+def _resolve_reference(reference_date: pd.Timestamp | None) -> pd.Timestamp:
+    """Tanggal acuan yang dipakai membandingkan tanggal akhir partnership."""
+    if reference_date is None:
+        return pd.Timestamp.today().normalize()
+    return pd.Timestamp(reference_date).normalize()
+
+
+def deduplicate_partners(df_partner: pd.DataFrame) -> pd.DataFrame:
+    """Satu baris per partner, berdasarkan nama ternormalisasi.
+
+    Kalau nama yang sama muncul beberapa kali (mis. partner di-raise ulang),
+    baris yang disimpan adalah yang tanggal akhirnya PALING BARU. Alasannya:
+    status post-partnership harus mengikuti kerja sama terakhir, bukan yang
+    sudah lewat. Tanpa ini satu partner bisa terhitung dua kali di metrik.
+    """
+    if _empty(df_partner):
+        return df_partner if df_partner is not None else pd.DataFrame()
+    _require_columns(df_partner, ("partner_name",), "df_partner")
+
+    result = df_partner.copy()
+    result["partner_key"] = result["partner_name"].map(normalize_partner_name)
+
+    sort_columns = ["partner_key"]
+    ascending = [True]
+    if "end_date" in result.columns:
+        sort_columns.append("end_date")
+        ascending.append(False)
+
+    result = result.sort_values(sort_columns, ascending=ascending, na_position="last")
+    return result.drop_duplicates(subset="partner_key", keep="first")
+
+
+def _reference_period(reference_date: pd.Timestamp | None) -> pd.Period:
+    """Bulan acuan. Post-partnership dinilai per BULAN, bukan per hari."""
+    return _resolve_reference(reference_date).to_period("M")
+
+
+def end_period_of(row) -> pd.Period | None:
+    """Bulan berakhir sebuah baris partner.
+
+    Diambil dari kolom end_month kalau ada (itu nilai asli setingkat bulan
+    dari sheet). Kalau tidak ada, diturunkan dari end_date. None kalau
+    keduanya kosong - artinya tanggal akhirnya tidak diketahui.
+    """
+    period = getattr(row, "end_month", None)
+    if period is not None and not pd.isna(period):
+        if isinstance(period, pd.Period):
+            return period
+        return pd.Timestamp(period).to_period("M")
+
+    end_date = getattr(row, "end_date", None)
+    if end_date is not None and not pd.isna(end_date):
+        return pd.Timestamp(end_date).to_period("M")
+    return None
+
+
+def is_post_partnership_due(
+    end_period, reference_date: pd.Timestamp | None = None
+) -> bool:
+    """True kalau Partnership Report & Survey SUDAH ditagih.
+
+    Aturan tunggal yang dipakai seluruh dashboard:
+
+        due  <=>  end_month <= bulan acuan
+
+    Jadi partner yang berakhir BULAN INI sudah masuk hitungan, bukan lagi
+    "Not Required Yet". Lihat aturan 7 di docstring modul.
+    """
+    if end_period is None or pd.isna(end_period):
+        return False
+    if not isinstance(end_period, pd.Period):
+        end_period = pd.Timestamp(end_period).to_period("M")
+    return end_period <= _reference_period(reference_date)
+
+
+def get_completed_partners(
+    df_partner: pd.DataFrame, reference_date: pd.Timestamp | None = None
+) -> pd.DataFrame:
+    """Partner yang sudah memasuki atau melewati bulan berakhirnya.
+
+    Partner yang bulan berakhirnya masih di depan tidak pernah masuk ke
+    sini. Partner tanpa Month End juga tidak, karena bulan akhirnya tidak
+    diketahui - bukan karena dianggap masih berjalan.
+    """
+    if _empty(df_partner):
+        return df_partner if df_partner is not None else pd.DataFrame()
+    _require_columns(df_partner, ("partner_name",), "df_partner")
+    if "end_month" not in df_partner.columns and "end_date" not in df_partner.columns:
+        raise KeyError("df_partner tidak punya kolom: end_month atau end_date")
+
+    unique = deduplicate_partners(df_partner)
+    keep = [
+        is_post_partnership_due(end_period_of(row), reference_date)
+        for row in unique.itertuples()
+    ]
+    result = unique[pd.Series(keep, index=unique.index)]
+    if result.empty:
+        return result
+    sort_column = "end_date" if "end_date" in result.columns else "end_month"
+    return result.sort_values(sort_column, ascending=False).reset_index(drop=True)
+
+
+def _names_of(df: pd.DataFrame | None, column: str = "partner_name") -> list[str]:
+    """Daftar nama unik pada sebuah dataframe sumber. [] kalau tidak ada."""
+    if _empty(df) or column not in df.columns:
+        return []
+    return [str(name) for name in df[column].dropna().unique() if str(name).strip()]
+
+
+def _report_lookup(df_report: pd.DataFrame | None) -> dict[str, dict]:
+    """Petakan nama partner di National_1.2 ke baris ringkasnya.
+
+    Kalau satu partner tercatat beberapa kali, baris yang SUDAH punya
+    dokumen laporan menang. Laporan yang sudah ada tidak boleh hilang
+    hanya karena ada baris lain yang masih kosong.
+    """
+    if _empty(df_report) or "partner_name" not in df_report.columns:
+        return {}
+
+    lookup: dict[str, dict] = {}
+    for row in df_report.itertuples():
+        name = str(getattr(row, "partner_name", "") or "")
+        if not name.strip():
+            continue
+        entry = {
+            "partner_name": name,
+            "has_report": bool(getattr(row, "has_report", False)),
+            "report_link_raw": getattr(row, "report_link_raw", None),
+            "pic_aiesec": getattr(row, "pic_aiesec", None),
+        }
+        existing = lookup.get(name)
+        if existing is None or (entry["has_report"] and not existing["has_report"]):
+            lookup[name] = entry
+    return lookup
+
+
+def get_post_partnership_tracker(
+    df_partner: pd.DataFrame,
+    df_report: pd.DataFrame | None = None,
+    df_survey: pd.DataFrame | None = None,
+    reference_date: pd.Timestamp | None = None,
+    unavailable: tuple[str, ...] | list[str] = (),
+) -> pd.DataFrame:
+    """Status Partnership Survey & Partnership Report per partner SELESAI.
+
+    Partnership Survey  -> dicari di PSC (df_survey).
+    Partnership Report  -> dicari di National_1.2 (df_report). Yang dipakai
+        sebagai bukti adalah kolom dokumen laporannya (has_report), BUKAN
+        sekadar nama partner ditemukan: di sumber ada partner yang tercatat
+        di 1.2 tetapi kolom laporannya masih kosong.
+
+    Args:
+        df_partner: sumber tanggal akhir partnership (National_1.1).
+        df_report: hasil build_df_report(). None/kosong -> semua Missing.
+        df_survey: hasil build_df_survey(). None/kosong -> semua Missing.
+        reference_date: tanggal acuan. Default hari ini.
+        unavailable: kunci sumber yang GAGAL DIBACA (POST_SOURCE_SURVEY /
+            POST_SOURCE_REPORT). Statusnya menjadi "Data Unavailable", bukan
+            "Missing" - sheet kosong dan sheet gagal dibaca adalah dua
+            keadaan yang berbeda dan tidak boleh disamakan.
+
+    Returns:
+        DataFrame kolom: partner_name, stakeholder, end_month_raw, end_date,
+        days_since_end, survey_status, report_status, survey_source_name,
+        report_source_name, report_recorded, is_fully_completed.
+        Urut dari partnership yang paling baru berakhir.
+    """
+    columns = [
+        "partner_name", "stakeholder", "end_month_raw", "end_date",
+        "days_since_end", "is_final_month", "survey_status", "report_status",
+        "survey_source_name", "report_source_name", "report_recorded",
+        "is_fully_completed",
+    ]
+    completed = get_completed_partners(df_partner, reference_date=reference_date)
+    if completed.empty:
+        return pd.DataFrame(columns=columns)
+
+    offline = set(unavailable or ())
+    survey_offline = POST_SOURCE_SURVEY in offline
+    report_offline = POST_SOURCE_REPORT in offline
+
+    reference = _resolve_reference(reference_date)
+    reference_period = _reference_period(reference_date)
+    survey_names = _names_of(df_survey)
+    report_rows = _report_lookup(df_report)
+    report_names = list(report_rows)
+
+    rows = []
+    for record in completed.itertuples():
+        partner_name = str(record.partner_name)
+
+        survey_match = match_partner_name(partner_name, survey_names)
+        report_match = match_partner_name(partner_name, report_names)
+        report_entry = report_rows.get(report_match) if report_match else None
+        has_report = bool(report_entry and report_entry["has_report"])
+
+        if survey_offline:
+            survey_status = POST_STATUS_UNAVAILABLE
+        else:
+            survey_status = (
+                POST_STATUS_COMPLETED if survey_match else POST_STATUS_MISSING
+            )
+
+        if report_offline:
+            report_status = POST_STATUS_UNAVAILABLE
+        else:
+            report_status = (
+                POST_STATUS_COMPLETED if has_report else POST_STATUS_MISSING
+            )
+
+        end_date = getattr(record, "end_date", pd.NaT)
+        end_period = end_period_of(record)
+        # Bisa NEGATIF untuk partner yang berakhir bulan ini tapi tanggalnya
+        # belum tiba. Itu wajar sejak aturan berbasis bulan dipakai, jadi
+        # pemanggil harus membaca is_final_month sebelum menulis "x hari lalu".
+        days_since_end = (
+            int((reference - pd.Timestamp(end_date).normalize()).days)
+            if end_date is not None and not pd.isna(end_date)
+            else None
+        )
+
+        rows.append(
+            {
+                "partner_name": partner_name,
+                "stakeholder": getattr(record, "stakeholder", "") or "",
+                "end_month_raw": getattr(record, "end_month_raw", None),
+                "end_date": end_date,
+                "days_since_end": days_since_end,
+                "is_final_month": bool(
+                    end_period is not None and end_period == reference_period
+                ),
+                "survey_status": survey_status,
+                "report_status": report_status,
+                "survey_source_name": survey_match,
+                "report_source_name": report_match,
+                # Tercatat di 1.2 tapi dokumennya belum ada: dibedakan supaya
+                # tindak lanjutnya jelas (menagih dokumen vs mendata partner).
+                "report_recorded": report_match is not None,
+                "is_fully_completed": (
+                    survey_status == POST_STATUS_COMPLETED
+                    and report_status == POST_STATUS_COMPLETED
+                ),
+            }
+        )
+
+    return (
+        pd.DataFrame(rows, columns=columns)
+        .sort_values("end_date", ascending=False, na_position="last")
+        .reset_index(drop=True)
+    )
+
+
+def _available_requirements(tracker: pd.DataFrame) -> list[tuple[str, str, str]]:
+    """Kewajiban yang sumbernya bisa dibaca pada tracker ini.
+
+    Kewajiban yang seluruh barisnya "Data Unavailable" dikeluarkan dari
+    perhitungan: kita tidak boleh menghitung persentase dari sumber yang
+    tidak terbaca.
+    """
+    available = []
+    for requirement in POST_REQUIREMENTS:
+        column = requirement[0]
+        if column not in tracker.columns:
+            continue
+        if (tracker[column] == POST_STATUS_UNAVAILABLE).all():
+            continue
+        available.append(requirement)
+    return available
+
+
+def get_post_partnership_summary(tracker: pd.DataFrame) -> dict[str, float | int]:
+    """Ringkasan Completed Partnership Tracker.
+
+    Penyebut persentase HANYA partnership yang sudah berakhir: setiap
+    partnership selesai wajib satu Survey dan satu Report, jadi
+
+        completion = (survey selesai + report selesai)
+                     / (partnership selesai x jumlah kewajiban) x 100
+
+    Partner aktif tidak pernah masuk penyebut. Kewajiban yang sumbernya
+    gagal dibaca juga tidak masuk penyebut, supaya persentasenya tidak
+    turun hanya karena satu sheet sedang tidak bisa diakses.
+
+    Returns:
+        dict: completed_partnerships, survey_completed, survey_missing,
+        report_completed, report_missing, report_recorded_without_document,
+        fully_completed, required_documents, completion_percent,
+        unavailable_requirements.
+    """
+    if _empty(tracker):
+        return {
+            "completed_partnerships": 0,
+            "survey_completed": 0,
+            "survey_missing": 0,
+            "report_completed": 0,
+            "report_missing": 0,
+            "report_recorded_without_document": 0,
+            "fully_completed": 0,
+            "required_documents": 0,
+            "completion_percent": float("nan"),
+            "unavailable_requirements": 0,
+        }
+
+    _require_columns(
+        tracker,
+        ("survey_status", "report_status", "is_fully_completed", "report_recorded"),
+        "tracker post-partnership",
+    )
+
+    total = int(len(tracker))
+    survey_done = int((tracker["survey_status"] == POST_STATUS_COMPLETED).sum())
+    report_done = int((tracker["report_status"] == POST_STATUS_COMPLETED).sum())
+    available = _available_requirements(tracker)
+    required = total * len(available)
+    completed_documents = sum(
+        int((tracker[column] == POST_STATUS_COMPLETED).sum())
+        for column, _label, _source in available
+    )
+
+    def missing_count(column: str) -> int:
+        return int((tracker[column] == POST_STATUS_MISSING).sum())
+
+    return {
+        "completed_partnerships": total,
+        "survey_completed": survey_done,
+        "survey_missing": missing_count("survey_status"),
+        "report_completed": report_done,
+        "report_missing": missing_count("report_status"),
+        "report_recorded_without_document": int(
+            (
+                tracker["report_recorded"]
+                & (tracker["report_status"] == POST_STATUS_MISSING)
+            ).sum()
+        ),
+        "fully_completed": int(tracker["is_fully_completed"].sum()),
+        "required_documents": required,
+        "completion_percent": (
+            round(completed_documents / required * 100, 2)
+            if required
+            else float("nan")
+        ),
+        "unavailable_requirements": len(POST_REQUIREMENTS) - len(available),
+    }
+
+
+def get_post_partnership_completeness(tracker: pd.DataFrame) -> pd.DataFrame:
+    """Rekap per jenis kewajiban, untuk grafik.
+
+    Kewajiban yang sumbernya gagal dibaca tidak digambar, karena angka
+    "0 completed" di situ akan terbaca sebagai fakta.
+
+    Returns:
+        DataFrame kolom: requirement, completed, missing, completed_percent
+    """
+    columns = ["requirement", "completed", "missing", "completed_percent"]
+    if _empty(tracker):
+        return pd.DataFrame(columns=columns)
+
+    total = int(len(tracker))
+    rows = []
+    for status_column, label, _source in _available_requirements(tracker):
+        completed = int((tracker[status_column] == POST_STATUS_COMPLETED).sum())
+        rows.append(
+            {
+                "requirement": label,
+                "completed": completed,
+                "missing": total - completed,
+                "completed_percent": round(completed / total * 100, 2) if total else 0.0,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def get_partnership_document_status(
+    df_partner: pd.DataFrame,
+    df_report: pd.DataFrame | None = None,
+    df_survey: pd.DataFrame | None = None,
+    reference_date: pd.Timestamp | None = None,
+    unavailable: tuple[str, ...] | list[str] = (),
+) -> pd.DataFrame:
+    """Status post-partnership untuk SELURUH partner.
+
+    Dipakai section "Partnership Report & Survey Tracker" di Document
+    Tracker, yang perlu menunjukkan partner mana yang memang BELUM ditagih:
+
+        bulan berakhir sudah tiba/lewat -> Completed / Missing
+        bulan berakhir masih di depan   -> Not Required Yet
+        tanpa Month End                 -> No End Date
+        sumber gagal dibaca             -> Data Unavailable
+
+    Perbandingannya per BULAN (lihat aturan 7 di docstring modul), jadi
+    partner yang berakhir bulan ini sudah ditagih - tidak lagi tertulis
+    "Not Required Yet".
+
+    Kolom *_submitted_early menandai partner yang mengumpulkan sebelum
+    bulan berakhirnya tiba. Statusnya tetap "Not Required Yet" supaya tidak
+    terbaca sebagai tagihan, tetapi progresnya tidak hilang dari laporan.
+
+    Returns:
+        DataFrame kolom: partner_name, stakeholder, end_month_raw, end_date,
+        is_due, is_final_month, survey_status, report_status,
+        survey_submitted_early, report_submitted_early, survey_source_name,
+        report_source_name.
+    """
+    columns = [
+        "partner_name", "stakeholder", "end_month_raw", "end_date",
+        "is_due", "is_final_month", "survey_status", "report_status",
+        "survey_submitted_early", "report_submitted_early",
+        "survey_source_name", "report_source_name",
+    ]
+    if _empty(df_partner):
+        return pd.DataFrame(columns=columns)
+    _require_columns(df_partner, ("partner_name",), "df_partner")
+    if "end_month" not in df_partner.columns and "end_date" not in df_partner.columns:
+        raise KeyError("df_partner tidak punya kolom: end_month atau end_date")
+
+    offline = set(unavailable or ())
+    survey_offline = POST_SOURCE_SURVEY in offline
+    report_offline = POST_SOURCE_REPORT in offline
+
+    reference_period = _reference_period(reference_date)
+    survey_names = _names_of(df_survey)
+    report_rows = _report_lookup(df_report)
+    report_names = list(report_rows)
+
+    rows = []
+    for record in deduplicate_partners(df_partner).itertuples():
+        partner_name = str(record.partner_name)
+        end_date = getattr(record, "end_date", pd.NaT)
+        end_period = end_period_of(record)
+
+        survey_match = match_partner_name(partner_name, survey_names)
+        report_match = match_partner_name(partner_name, report_names)
+        report_entry = report_rows.get(report_match) if report_match else None
+        has_report = bool(report_entry and report_entry["has_report"])
+
+        if end_period is None:
+            survey_status = report_status = POST_STATUS_NO_END_DATE
+            is_due = False
+        elif end_period <= reference_period:
+            is_due = True
+            survey_status = (
+                POST_STATUS_COMPLETED if survey_match else POST_STATUS_MISSING
+            )
+            report_status = POST_STATUS_COMPLETED if has_report else POST_STATUS_MISSING
+        else:
+            is_due = False
+            survey_status = report_status = POST_STATUS_NOT_REQUIRED
+
+        # Sumber tidak terbaca hanya menimpa status yang seharusnya menilai
+        # dokumen. "Not Required Yet" dan "No End Date" tidak bergantung pada
+        # sumber itu, jadi tetap apa adanya.
+        if survey_offline and is_due:
+            survey_status = POST_STATUS_UNAVAILABLE
+        if report_offline and is_due:
+            report_status = POST_STATUS_UNAVAILABLE
+
+        rows.append(
+            {
+                "partner_name": partner_name,
+                "stakeholder": getattr(record, "stakeholder", "") or "",
+                "end_month_raw": getattr(record, "end_month_raw", None),
+                "end_date": end_date,
+                "is_due": is_due,
+                "is_final_month": bool(
+                    end_period is not None and end_period == reference_period
+                ),
+                "survey_status": survey_status,
+                "report_status": report_status,
+                "survey_submitted_early": (not is_due) and bool(survey_match),
+                "report_submitted_early": (not is_due) and has_report,
+                "survey_source_name": survey_match,
+                "report_source_name": report_match,
+            }
+        )
+
+    result = pd.DataFrame(rows, columns=columns)
+    # Yang sudah wajib ditaruh di atas, lalu yang paling dekat berakhir.
+    result["_order"] = result["is_due"].map({True: 0, False: 1})
+    return (
+        result.sort_values(["_order", "end_date", "partner_name"], na_position="last")
+        .drop(columns="_order")
+        .reset_index(drop=True)
+    )
+
+
+# ---------------------------------------------------------------------------
+# KPI 11 — Partner yang segera berakhir (berbasis HARI)
+# ---------------------------------------------------------------------------
+
+
+def categorize_urgency(days_remaining) -> str:
+    """Tingkat urgensi kartu partner yang segera berakhir.
+
+    Berbasis HARI, bukan bulan, karena kartu ini memang menampilkan sisa
+    hari. Kategori bulanan di get_partnership_expiry() tetap dipakai untuk
+    grafik ringkasan dan tidak diubah.
+    """
+    if days_remaining is None or pd.isna(days_remaining):
+        return URGENCY_NORMAL
+    days = int(days_remaining)
+    if days <= EXPIRY_CRITICAL_DAYS:
+        return URGENCY_CRITICAL
+    if days <= EXPIRY_WARNING_DAYS:
+        return URGENCY_WARNING
+    return URGENCY_NORMAL
+
+
+def get_expiring_partners(
+    df_partner: pd.DataFrame,
+    reference_date: pd.Timestamp | None = None,
+    df_report: pd.DataFrame | None = None,
+    within_days: int | None = None,
+    limit: int | None = None,
+) -> pd.DataFrame:
+    """Partner aktif yang partnership-nya akan berakhir, urut paling dekat.
+
+    Args:
+        reference_date: acuan penghitungan sisa hari. Default hari ini.
+        df_report: kalau diisi, PIC FROM AIESEC diambil dari National_1.2
+            lewat pencocokan nama. National_1.1 tidak punya kolom itu
+            (kolom "PIC" di sana adalah kontak pihak partner), jadi PIC
+            dibiarkan None kalau tidak ketemu - tidak pernah dikarang.
+        within_days: batasi hanya yang berakhir dalam N hari.
+        limit: batasi jumlah baris.
+
+    Returns:
+        DataFrame kolom: partner_name, stakeholder, pic_aiesec, end_date,
+        end_month_raw, days_remaining, months_remaining, urgency.
+        Urut days_remaining ASC (paling dekat berakhir lebih dulu).
+    """
+    columns = [
+        "partner_name", "stakeholder", "pic_aiesec", "end_date",
+        "end_month_raw", "days_remaining", "months_remaining", "urgency",
+    ]
+    if _empty(df_partner):
+        return pd.DataFrame(columns=columns)
+    _require_columns(
+        df_partner, ("partner_name", "end_date", "is_active"), "df_partner"
+    )
+
+    reference = _resolve_reference(reference_date)
+    unique = deduplicate_partners(df_partner)
+    ongoing = unique[
+        unique["is_active"]
+        & unique["end_date"].notna()
+        & (unique["end_date"] >= reference)
+    ]
+    if ongoing.empty:
+        return pd.DataFrame(columns=columns)
+
+    report_rows = _report_lookup(df_report)
+    report_names = list(report_rows)
+
+    rows = []
+    for record in ongoing.itertuples():
+        partner_name = str(record.partner_name)
+        days_remaining = int((pd.Timestamp(record.end_date).normalize() - reference).days)
+
+        pic = None
+        if report_names:
+            match = match_partner_name(partner_name, report_names)
+            if match:
+                candidate = report_rows[match].get("pic_aiesec")
+                if candidate is not None and not pd.isna(candidate):
+                    pic = str(candidate).strip() or None
+
+        rows.append(
+            {
+                "partner_name": partner_name,
+                "stakeholder": getattr(record, "stakeholder", "") or "",
+                "pic_aiesec": pic,
+                "end_date": record.end_date,
+                "end_month_raw": getattr(record, "end_month_raw", None),
+                "days_remaining": days_remaining,
+                "months_remaining": getattr(record, "months_remaining", pd.NA),
+                "urgency": categorize_urgency(days_remaining),
+            }
+        )
+
+    result = pd.DataFrame(rows, columns=columns)
+    if within_days is not None:
+        result = result[result["days_remaining"] <= int(within_days)]
+    result = result.sort_values(
+        ["days_remaining", "partner_name"]
+    ).reset_index(drop=True)
+    if limit is not None:
+        result = result.head(int(limit))
+    return result
 
 
 # ---------------------------------------------------------------------------

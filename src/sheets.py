@@ -57,6 +57,13 @@ NATIONAL_PARTNER_WORKSHEET = "National_1.1"    # partner / sales funnel / dokume
 NATIONAL_FINANCIAL_WORKSHEET = "National_1.3"  # financial revenue
 NATIONAL_INKIND_WORKSHEET = "National_1.4"     # in-kind value
 
+# Tab post-partnership. Nama tab dikonfirmasi lewat list_worksheet_names()
+# pada mirror, bukan hasil tebakan:
+#   National_1.2 -> Post-Partnership Report (kolom "Link" berisi dokumennya)
+#   PSC          -> respons Partnership Survey (satu baris = satu responden)
+NATIONAL_REPORT_WORKSHEET = "National_1.2"
+NATIONAL_SURVEY_WORKSHEET = "PSC"
+
 # Scope READ-ONLY.
 # Kita hanya perlu membaca, jadi kita minta izin seminimal mungkin
 # (principle of least privilege). Dashboard ini tidak boleh menulis ke ESSM.
@@ -279,3 +286,28 @@ def open_active_mr_worksheets() -> list[gspread.Worksheet]:
     """Ambil ketiga tab Market Research dari Active ESSM, sesuai urutan konstanta."""
     spreadsheet = open_active_essm()
     return [get_worksheet(spreadsheet, name) for name in ACTIVE_MR_WORKSHEETS]
+
+
+def read_national_values(title: str) -> list[list[str]]:
+    """Baca satu tab National Mirror sebagai raw values.
+
+    Gagal keras kalau tab tidak ada: pemanggil yang memang boleh berjalan
+    tanpa tab tersebut harus memakai try_read_national_values().
+    """
+    return read_worksheet_values(get_worksheet(open_national_mirror(), title))
+
+
+def try_read_national_values(title: str) -> list[list[str]] | None:
+    """Sama seperti read_national_values(), tapi None kalau tab tidak ada.
+
+    Dipakai untuk tab post-partnership (National_1.2 & PSC): dashboard harus
+    tetap hidup dan menampilkan empty state kalau tab itu belum dibuat atau
+    sudah diganti nama, bukan menampilkan stack trace.
+
+    Kegagalan lain (kredensial, kuota, jaringan) TIDAK ditelan di sini —
+    itu masalah yang perlu diketahui pemanggil.
+    """
+    try:
+        return read_national_values(title)
+    except gspread.WorksheetNotFound:
+        return None

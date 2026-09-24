@@ -45,6 +45,76 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ---------------------------------------------------------------------------
+# Perbaikan font ikon — WAJIB disisipkan ke SETIAP blok <style> dashboard
+# ---------------------------------------------------------------------------
+#
+# MASALAH YANG DIPERBAIKI
+#   Streamlit menggambar ikon sebagai LIGATUR TEKS, bukan sebagai gambar:
+#
+#       <span data-testid="stIconMaterial">keyboard_double_arrow_left</span>
+#
+#   Span itu hanya berubah menjadi panah kalau font "Material Symbols
+#   Rounded" yang dipakai untuk merendernya.
+#
+#   Dashboard ini punya aturan font global dengan selektor [class*="st-"].
+#   Kelas emotion milik Streamlit berbentuk "st-emotion-cache-..." sehingga
+#   IKUT COCOK dengan selektor itu. Karena CSS kita disuntikkan setelah CSS
+#   Streamlit dan spesifisitasnya sama, font ikon tertimpa font teks biasa.
+#   Akibatnya yang tampil justru NAMA ikonnya sebagai tulisan:
+#
+#       keyboard_double_arrow_left / keyboard_double_arrow_right
+#           -> tombol buka/tutup sidebar
+#       keyboard_arrow_down / keyboard_arrow_right
+#           -> panah expander dan panah geser tab
+#       info, warning, help
+#           -> ikon st.warning, st.info, dan ikon bantuan pada kartu KPI
+#       fullscreen, download, search
+#           -> toolbar yang muncul saat kursor melewati grafik dan tabel
+#
+#   Itulah "tulisan aneh yang muncul saat hover" - bukan teks ganda,
+#   melainkan ikon yang gagal menjadi ikon.
+#
+# CARA PERBAIKANNYA
+#   Font ikon dipasang ulang secara eksplisit. Selektornya memakai
+#   data-testid (dan kelas target emotion sebagai cadangan) supaya tepat
+#   sasaran, dan !important dipakai SENGAJA: aturan ini memang harus
+#   menang melawan aturan font global mana pun, sekarang maupun nanti.
+ICON_FONT_CSS = """
+  [data-testid="stIconMaterial"],
+  [data-testid="stAlertDynamicIcon"],
+  [data-testid="stToastDynamicIcon"],
+  [data-testid="stHeadingIcon"],
+  [data-testid="stMetricIcon"],
+  [data-testid="stExpanderIcon"],
+  [data-testid="stTooltipIcon"] svg,
+  span.e1vmumty0,
+  .material-symbols-rounded,
+  .material-symbols-outlined {
+      font-family: 'Material Symbols Rounded' !important;
+      font-weight: normal !important;
+      font-style: normal !important;
+      letter-spacing: normal !important;
+      text-transform: none !important;
+      white-space: nowrap !important;
+      word-wrap: normal !important;
+      direction: ltr !important;
+      font-feature-settings: 'liga' !important;
+      -moz-font-feature-settings: 'liga' !important;
+      -webkit-font-feature-settings: 'liga' !important;
+      -webkit-font-smoothing: antialiased;
+  }
+
+  /* Ikon di dalam tombol ikut kursor tombolnya, bukan kursor teks. */
+  button [data-testid="stIconMaterial"],
+  [role="button"] [data-testid="stIconMaterial"],
+  summary [data-testid="stIconMaterial"],
+  button span.e1vmumty0,
+  [role="button"] span.e1vmumty0 {
+      cursor: pointer;
+  }
+"""
+
 # =========================================================
 # ACCESS CONTROL
 # =========================================================
@@ -129,7 +199,7 @@ if st.session_state.access_mode is None:
             margin-bottom: 18px;
         }
 
-        div[data-testid="stButton"] > button {
+        [data-testid="stButton"] > button {
             height: 50px;
             margin-top: 8px;
             border-radius: 14px;
@@ -141,13 +211,28 @@ if st.session_state.access_mode is None:
             transition: all .2s ease;
         }
 
-        div[data-testid="stButton"] > button:hover {
+        [data-testid="stButton"] > button:hover {
             transform: translateY(-2px);
             background: linear-gradient(110deg,#5969EA,#7381FA);
             color: white;
             border-color: transparent;
             box-shadow: 0 13px 28px rgba(77,92,220,.23);
         }
+
+        /* Audit kursor: kartu dan teks di halaman ini bukan elemen yang
+           bisa ditekan, jadi kursornya harus tetap kursor biasa. */
+        .stApp, .block-container, h1, h2, h3, p, span, div,
+        .landing-badge, .access-card, .access-card *, .access-icon,
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stMarkdownContainer"] * { cursor: default; }
+        button, [role="button"], a[href],
+        [data-testid="stButton"] > button,
+        [data-testid="stButton"] > button * { cursor: pointer; }
+        [data-testid="stHeadingWithActionElements"] a,
+        [data-testid="stHeaderActionElements"] { display: none !important; }
+        """
+        + ICON_FONT_CSS
+        + """
         </style>
         """,
         unsafe_allow_html=True,
@@ -302,27 +387,211 @@ if st.session_state.access_mode is None:
 # ---------- MEMBER LOGIN ----------
 if st.session_state.access_mode == "login":
 
-    st.title("🔐 AIESEC Member Access")
+    # Gaya khusus halaman login. Tetap biru-putih seperti dashboard, tapi
+    # lebih lapang karena hanya ada satu kartu di layar.
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
 
-    password = st.text_input(
-        "Enter member password",
-        type="password"
+        html, body, [class*="st-"], button, input { font-family: 'Inter', sans-serif; }
+
+        .stApp {
+            background:
+                radial-gradient(circle at 12% 12%, rgba(91,107,247,.16), transparent 38%),
+                radial-gradient(circle at 88% 85%, rgba(46,155,240,.13), transparent 38%),
+                linear-gradient(140deg, #EDF2FF 0%, #F8FAFF 46%, #FFFFFF 74%, #EEF4FF 100%);
+            min-height: 100vh;
+        }
+        header[data-testid="stHeader"] { background: transparent; }
+        #MainMenu, footer { visibility: hidden; }
+        .block-container { max-width: 980px; padding-top: 4.5rem; padding-bottom: 3rem; }
+
+        /* Kartu login: satu container Streamlit yang di-styling, supaya
+           input password tetap widget asli Streamlit (bukan HTML palsu).
+
+           Dua bentuk markup didukung sekaligus. Streamlit versi lama
+           membungkus container ber-border dengan
+           stVerticalBlockBorderWrapper; versi yang dipakai sekarang
+           memasang border langsung pada elemen yang membawa kelas
+           st-key-<key>. Menyebut keduanya membuat gaya ini tidak diam-diam
+           berhenti bekerja saat Streamlit diperbarui. */
+        div[class*="st-key-login_card"] [data-testid="stVerticalBlockBorderWrapper"],
+        div[class*="st-key-login_card"] {
+            background: rgba(255,255,255,.92);
+            border: 1px solid #E2E9FB;
+            border-radius: 24px;
+            box-shadow: 0 18px 46px rgba(31, 45, 112, .10);
+            padding: 1.9rem 1.9rem 1.5rem 1.9rem;
+            backdrop-filter: blur(14px);
+        }
+
+        .login-mark {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 46px; height: 46px; border-radius: 15px;
+            background: linear-gradient(140deg, #5B6BF7, #3B4BD8);
+            color: #FFFFFF; font-size: 20px;
+            box-shadow: 0 8px 20px rgba(59, 75, 216, .26);
+        }
+        .login-eyebrow {
+            /* block, bukan inline-block: kalau inline, teks ini berdiri di
+               samping lambang kunci dan saling menimpa. */
+            display: block; margin-top: .9rem;
+            font-size: .66rem; font-weight: 800; letter-spacing: .14em;
+            text-transform: uppercase; color: #5B6BF7;
+        }
+        .login-title {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.6rem; font-weight: 800; color: #1B2559;
+            letter-spacing: -.02em; margin: .3rem 0 .35rem 0;
+        }
+        .login-sub {
+            font-size: .86rem; color: #75809B; line-height: 1.65;
+            margin: 0 0 1.35rem 0;
+        }
+        .login-field-label {
+            font-size: .72rem; font-weight: 700; letter-spacing: .09em;
+            text-transform: uppercase; color: #8A94AD; margin: 0 0 .35rem .15rem;
+        }
+        .login-foot {
+            display: flex; align-items: center; justify-content: center; gap: .4rem;
+            margin-top: 1.4rem; font-size: .74rem; color: #97A1B8;
+        }
+        .login-foot-dot {
+            width: 7px; height: 7px; border-radius: 50%; background: #1F7AE0;
+            box-shadow: 0 0 0 3px rgba(31,122,224,.16);
+        }
+
+        /* Input password.
+           stTextInputRootElement adalah pembungkus input yang benar-benar
+           ada di DOM; data-baseweb sudah tidak dipakai lagi oleh Streamlit,
+           jadi keduanya disebut agar aman di dua versi. */
+        div[class*="st-key-login_card"] div[data-baseweb="input"],
+        div[class*="st-key-login_card"] [data-testid="stTextInputRootElement"] {
+            border-radius: 14px !important;
+            border: 1px solid #DCE3F7 !important;
+            background: #FBFCFF !important;
+        }
+        div[class*="st-key-login_card"] div[data-baseweb="input"]:focus-within,
+        div[class*="st-key-login_card"] [data-testid="stTextInputRootElement"]:focus-within {
+            border-color: #8492FB !important;
+            box-shadow: 0 0 0 4px rgba(91,107,247,.12);
+        }
+        div[class*="st-key-login_card"] input { height: 46px; font-size: .9rem; }
+
+        /* Tombol utama & tombol kembali */
+        div[class*="st-key-login_submit"] button {
+            height: 46px; margin-top: .55rem;
+            border-radius: 14px; border: none;
+            background: linear-gradient(110deg, #5B6BF7, #3B4BD8);
+            color: #FFFFFF; font-weight: 700; font-size: .88rem;
+            box-shadow: 0 10px 24px rgba(59, 75, 216, .24);
+            transition: transform .18s ease, box-shadow .18s ease;
+        }
+        div[class*="st-key-login_submit"] button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 14px 30px rgba(59, 75, 216, .30);
+        }
+        div[class*="st-key-login_back"] button {
+            height: 40px; margin-top: .35rem;
+            border-radius: 12px; border: 1px solid transparent;
+            background: transparent; color: #7D87A1;
+            font-weight: 600; font-size: .8rem;
+        }
+        div[class*="st-key-login_back"] button:hover {
+            background: #F2F5FE; color: #3B4BD8;
+        }
+
+        /* Audit kursor untuk halaman ini juga. */
+        .stApp, .block-container, h1, h2, h3, p, span, div,
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stMarkdownContainer"] *,
+        [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="stAlert"], [data-testid="stAlert"] * { cursor: default; }
+        button, [role="button"], a[href], [data-testid="stButton"] > button,
+        [data-testid="stButton"] > button * { cursor: pointer; }
+        input[type="password"], input[type="text"] { cursor: text; }
+        [data-testid="stHeadingWithActionElements"] a,
+        [data-testid="stHeaderActionElements"] { display: none !important; }
+        """
+        + ICON_FONT_CSS
+        + """
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns(2)
+    def _member_password() -> str | None:
+        """Ambil MEMBER_PASSWORD dari Streamlit Secrets.
 
-    with col1:
-        if st.button("Login", use_container_width=True):
-            if password == st.secrets["MEMBER_PASSWORD"]:
-                st.session_state.access_mode = "member"
+        Hanya mengembalikan nilainya untuk dibandingkan di memori. Nilainya
+        TIDAK PERNAH ditulis ke UI, ke log, maupun ke pesan error - kalau
+        belum dikonfigurasi, yang muncul hanya keterangan bahwa login belum
+        disiapkan.
+        """
+        try:
+            secret = st.secrets["MEMBER_PASSWORD"]
+        except (KeyError, FileNotFoundError):
+            return None
+        return str(secret)
+
+    left_gap, login_column, right_gap = st.columns([1, 1.7, 1], gap="small")
+
+    with login_column:
+        with st.container(border=True, key="login_card"):
+            st.markdown(
+                '<span class="login-mark">&#128274;</span>'
+                '<span class="login-eyebrow">Internal Access</span>'
+                '<p class="login-title">AIESEC Member Access</p>'
+                '<p class="login-sub">Enter your member password to access the '
+                'full dashboard.</p>'
+                '<p class="login-field-label">Member password</p>',
+                unsafe_allow_html=True,
+            )
+
+            password = st.text_input(
+                "Member password",
+                type="password",
+                # Bukan deretan titik: placeholder berisi titik-titik terbaca
+                # seperti kolom yang sudah terisi.
+                placeholder="Enter password",
+                label_visibility="collapsed",
+                key="member_password_input",
+            )
+
+            submitted = st.button(
+                "Access Dashboard",
+                width="stretch",
+                key="login_submit",
+            )
+            went_back = st.button(
+                "Back to access options",
+                width="stretch",
+                key="login_back",
+            )
+
+            if submitted:
+                expected = _member_password()
+                if expected is None:
+                    st.error(
+                        "Member login belum dikonfigurasi. Hubungi pengelola "
+                        "dashboard untuk mengaktifkannya."
+                    )
+                elif password == expected:
+                    st.session_state.access_mode = "member"
+                    st.rerun()
+                else:
+                    st.error("Password tidak sesuai. Silakan coba lagi.")
+
+            if went_back:
+                st.session_state.access_mode = None
                 st.rerun()
-            else:
-                st.error("Incorrect password.")
 
-    with col2:
-        if st.button("Back", use_container_width=True):
-            st.session_state.access_mode = None
-            st.rerun()
+        st.markdown(
+            '<div class="login-foot"><span class="login-foot-dot"></span>'
+            'Internal partnership data is protected</div>',
+            unsafe_allow_html=True,
+        )
 
     st.stop()
 
@@ -372,7 +641,7 @@ STYLE = """
   html, body, [class*="st-"], button, input, select, textarea {
       font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   }
-  h1, h2, h3, h4, .bd-title, .bd-card-title, div[data-testid="stMetricValue"] {
+  h1, h2, h3, h4, .bd-title, .bd-card-title, [data-testid="stMetricValue"] {
       font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
   }
 
@@ -382,33 +651,57 @@ STYLE = """
   .block-container { padding-top: 3rem; padding-bottom: 2.2rem; max-width: 1560px; }
 
   /* ---- Kartu ---- */
-  div[data-testid="stVerticalBlockBorderWrapper"] {
+  /* Dua bentuk markup didukung sekaligus:
+       Streamlit lama : st.container(border=True) dibungkus
+                        stVerticalBlockBorderWrapper
+       Streamlit kini : border dipasang langsung pada elemen yang membawa
+                        kelas st-key-<key>
+     Karena itu setiap kartu diberi key berawalan "bdcard" (lihat helper
+     card()), sehingga hook-nya adalah parameter key yang memang bagian
+     dari API Streamlit - bukan kelas emotion yang berubah setiap build. */
+  [data-testid="stVerticalBlockBorderWrapper"],
+  div[class*="st-key-bdcard"] {
       background: #FFFFFF;
       border: 1px solid #EDF0F8;
       border-radius: 20px;
       box-shadow: 0 6px 20px rgba(27, 37, 89, 0.05);
       padding: .25rem .35rem;
   }
+  /* Kartu section punya isi padat, jadi paddingnya sedikit lebih lega. */
+  div[class*="st-key-bdcard_section"] {
+      padding: .9rem 1.1rem 1rem 1.1rem;
+  }
 
   /* ---- Kartu KPI ---- */
-  div[data-testid="stMetric"] {
+  [data-testid="stMetric"] {
       background: #FFFFFF;
       border: 1px solid #EDF0F8;
       border-radius: 20px;
       box-shadow: 0 6px 20px rgba(27, 37, 89, 0.05);
       padding: 14px 16px 10px 16px;
   }
-  div[data-testid="stMetricLabel"] p {
+  [data-testid="stMetricLabel"] p {
       font-size: .72rem; font-weight: 600; letter-spacing: .08em;
       text-transform: uppercase; color: #8A94AD;
   }
-  div[data-testid="stMetricValue"] {
+  /* Label metric boleh turun baris. Section Completed Partnership memakai
+     lima kartu berdampingan, dan tanpa ini nama seperti
+     "Post-Partnership Completion" terpotong menjadi "Post-Partnership Co...". */
+  [data-testid="stMetricLabel"],
+  [data-testid="stMetricLabel"] p,
+  [data-testid="stMetricDelta"],
+  [data-testid="stMetricDelta"] div {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+  }
+  [data-testid="stMetricValue"] {
       font-size: 1.75rem; font-weight: 800; color: #1B2559; line-height: 1.15;
   }
-  div[data-testid="stMetricDelta"] { font-size: .74rem; color: #8A94AD; font-weight: 500; }
+  [data-testid="stMetricDelta"] { font-size: .74rem; color: #8A94AD; font-weight: 500; }
 
   /* ---- Kartu gelap (penarik mata, mengikuti referensi) ---- */
-  .st-key-hero_highlight div[data-testid="stVerticalBlockBorderWrapper"],
+  .st-key-hero_highlight [data-testid="stVerticalBlockBorderWrapper"],
   div[class*="st-key-hero_highlight"] {
       background: linear-gradient(155deg, #5B6BF7 0%, #4453D6 55%, #2F3BAF 100%);
       border: none;
@@ -460,9 +753,16 @@ STYLE = """
                 background: #EEF0FE; color: #3A45B8; white-space: nowrap; }
 
   /* ---- Tab ---- */
-  div[data-baseweb="tab-list"] { gap: .3rem; border-bottom: 1px solid #E9ECF6; }
-  button[data-baseweb="tab"] { padding: .4rem .1rem; }
-  button[data-baseweb="tab"] p { font-size: .86rem; font-weight: 600; }
+  /* Streamlit tidak lagi memasang data-baseweb. Tab sekarang berupa
+     div[role="tab"][data-testid="stTab"]; kedua bentuk disebut agar aman. */
+  div[data-baseweb="tab-list"],
+  [data-testid="stTabs"] > div:first-child {
+      gap: .3rem; border-bottom: 1px solid #E9ECF6;
+  }
+  button[data-baseweb="tab"],
+  [data-testid="stTab"] { padding: .4rem .1rem; }
+  button[data-baseweb="tab"] p,
+  [data-testid="stTab"] p { font-size: .86rem; font-weight: 600; }
 
   /* ---- Sidebar ---- */
   section[data-testid="stSidebar"] { background: #FFFFFF; border-right: 1px solid #EDF0F8; }
@@ -472,6 +772,262 @@ STYLE = """
                    background: linear-gradient(140deg, #5B6BF7, #3B4BD8); }
   .bd-brand { font-weight: 800; font-size: .98rem; color: #1B2559; margin-top: .5rem; }
   .bd-brand-sub { font-size: .74rem; color: #8A94AD; margin-top: -.15rem; }
+
+  /* ---- Sidebar: kelompok kontrol ---- */
+  /* Setiap kelompok punya judul kecil + permukaan biru sangat muda, supaya
+     sidebar terbaca sebagai satu panel bertingkat, bukan tumpukan widget. */
+  section[data-testid="stSidebar"] .block-container,
+  section[data-testid="stSidebar"] > div { padding-top: 1.1rem; }
+
+  .bd-side-group { display: flex; align-items: baseline; gap: .4rem;
+                   margin: 1.05rem .1rem .45rem .1rem; }
+  .bd-side-group-title { font-family: 'Plus Jakarta Sans', sans-serif;
+                         font-size: .68rem; font-weight: 800; letter-spacing: .13em;
+                         text-transform: uppercase; color: #3B4BD8; }
+  .bd-side-group-line { flex: 1 1 auto; height: 1px;
+                        background: linear-gradient(90deg, #D8DEFB, rgba(216,222,251,0)); }
+
+  section[data-testid="stSidebar"] div[class*="st-key-side_"]
+      [data-testid="stVerticalBlockBorderWrapper"],
+  section[data-testid="stSidebar"] div[class*="st-key-side_"] {
+      background: linear-gradient(180deg, #F7F9FF 0%, #FFFFFF 100%);
+      border: 1px solid #E4EAFD;
+      border-radius: 16px;
+      box-shadow: 0 3px 12px rgba(27, 37, 89, 0.04);
+      padding: .55rem .7rem .65rem .7rem;
+  }
+  section[data-testid="stSidebar"] label p { font-size: .76rem; font-weight: 600;
+                                             color: #6B7590; }
+  section[data-testid="stSidebar"] [data-testid="stButton"] > button {
+      border-radius: 12px; font-weight: 700; font-size: .8rem;
+      border: 1px solid #D8DEFB; background: #FFFFFF; color: #3B4BD8;
+  }
+  section[data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
+      background: #EEF1FE; border-color: #B9CEFC; color: #2F3BAF;
+  }
+
+  /* ---- Baris akses di sidebar ---- */
+  .bd-access { display: flex; align-items: center; gap: .55rem; }
+  .bd-access-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+  .bd-access-dot-member { background: #1F7AE0; box-shadow: 0 0 0 3px rgba(31,122,224,.16); }
+  .bd-access-dot-anon { background: #8FA0C4; box-shadow: 0 0 0 3px rgba(143,160,196,.16); }
+  .bd-access-main { min-width: 0; }
+  .bd-access-name { font-size: .8rem; font-weight: 700; color: #1B2559; line-height: 1.3; }
+  .bd-access-note { font-size: .7rem; color: #8A94AD; line-height: 1.3; }
+
+  /* ---- Judul section di dalam tab ---- */
+  .bd-section { margin: .35rem 0 .55rem 0; }
+  .bd-section-title { font-family: 'Plus Jakarta Sans', sans-serif;
+                      font-size: 1.05rem; font-weight: 800; color: #1B2559;
+                      margin: 0; letter-spacing: -.01em; }
+  .bd-section-sub { font-size: .78rem; color: #8A94AD; margin: .15rem 0 0 0; }
+
+  /* ---- Badge status (Completed / Missing / Not Required Yet) ---- */
+  .bd-badge { display: inline-flex; align-items: center; gap: .3rem;
+              font-size: .72rem; font-weight: 700; letter-spacing: .01em;
+              padding: .22rem .6rem; border-radius: 999px;
+              border: 1px solid transparent; white-space: nowrap; }
+  .bd-badge-done    { background: #E8F3FE; border-color: #B6D7F8; color: #1257A0; }
+  .bd-badge-missing { background: #FFF2E9; border-color: #FFD2B3; color: #9A4B06; }
+  .bd-badge-wait    { background: #F1F3FA; border-color: #E0E5F3; color: #6B7590; }
+  .bd-badge-none    { background: #F7F8FC; border-color: #E9ECF6; color: #96A0B8; }
+  .bd-badge-mark { font-weight: 800; }
+
+  /* ---- Baris tracker post-partnership ---- */
+  .bd-track { display: flex; flex-direction: column; gap: .3rem; margin-top: .25rem; }
+  .bd-track-head, .bd-track-row {
+      display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(0, 1fr)
+                                            minmax(0, 1.15fr) minmax(0, 1.15fr);
+      gap: .5rem; align-items: center;
+  }
+  .bd-track-head { padding: 0 .7rem .25rem .7rem; }
+  .bd-track-head span { font-size: .68rem; font-weight: 800; letter-spacing: .09em;
+                        text-transform: uppercase; color: #96A0B8; }
+  .bd-track-row { padding: .55rem .7rem; border-radius: 14px;
+                  background: #FBFCFF; border: 1px solid #EDF0F8; }
+  .bd-track-row-full { background: linear-gradient(90deg, #F3F8FE, #FBFCFF 65%);
+                       border-color: #DCE9FA; }
+  /* Setiap sel grid dibuat bisa menyusut, dan nama + keterangan ditumpuk.
+     Tanpa display:block keduanya berdempetan dalam satu baris sehingga
+     nama partner dan stakeholder terbaca menyambung tanpa spasi.
+     Catatan: komentar di blok ini ikut terkirim ke browser, jadi jangan
+     pernah menulis nama partner asli di sini. */
+  .bd-track-row > span { min-width: 0; }
+  .bd-track-name { display: block; font-size: .83rem; font-weight: 700;
+                   color: #1B2559; overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+  .bd-track-meta { display: block; font-size: .71rem; color: #8A94AD;
+                   overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+  .bd-track-date { font-size: .76rem; color: #4A5573; font-weight: 600; }
+
+  /* ---- Kartu partner yang segera berakhir ---- */
+  /* auto-fit + minmax: jumlah kolom menyesuaikan lebar layar tanpa media
+     query, jadi kartu tetap terbaca di layar sempit maupun lebar. */
+  .bd-exp-grid { display: grid; gap: .6rem; margin-top: .3rem;
+                 grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .bd-exp-card { position: relative; overflow: hidden;
+                 padding: .8rem .9rem .85rem 1.05rem;
+                 background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFF 100%);
+                 border: 1px solid #E4EAFD; border-radius: 18px;
+                 box-shadow: 0 4px 16px rgba(27, 37, 89, 0.05); }
+  .bd-exp-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+                         width: 4px; background: #B9CEFC; }
+  .bd-exp-critical { background: linear-gradient(135deg, #FFFFFF 0%, #EEF4FF 100%);
+                     border-color: #C3D6FB; }
+  .bd-exp-critical::before { background: linear-gradient(180deg, #3B4BD8, #16357E); }
+  .bd-exp-warning { border-color: #D3DEFB; }
+  .bd-exp-warning::before { background: linear-gradient(180deg, #5B6BF7, #3B4BD8); }
+  .bd-exp-normal::before { background: #B9CEFC; }
+  .bd-exp-top { display: flex; align-items: flex-start; justify-content: space-between;
+                gap: .5rem; }
+  /* Nama partner boleh turun ke baris kedua. Memotong di tengah kata
+     ("DMAC Chicke...") membuat partner sulit dikenali, sedangkan dua baris
+     masih rapi dan tinggi kartu tetap seragam karena dibatasi clamp. */
+  .bd-exp-name { font-family: 'Plus Jakarta Sans', sans-serif; font-size: .92rem;
+                 font-weight: 800; color: #1B2559; line-height: 1.3;
+                 min-width: 0; white-space: normal; overflow: hidden;
+                 display: -webkit-box; -webkit-line-clamp: 2;
+                 -webkit-box-orient: vertical; }
+  .bd-exp-pic { font-size: .72rem; color: #8A94AD; margin-top: .1rem;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bd-exp-label { font-size: .66rem; font-weight: 700; letter-spacing: .1em;
+                  text-transform: uppercase; color: #96A0B8; margin-top: .65rem; }
+  .bd-exp-date { font-family: 'Plus Jakarta Sans', sans-serif; font-size: .95rem;
+                 font-weight: 800; color: #22306B; line-height: 1.25; }
+  .bd-exp-days { font-size: .76rem; font-weight: 700; margin-top: .2rem; }
+  .bd-exp-days-critical { color: #16357E; }
+  .bd-exp-days-warning { color: #3B4BD8; }
+  .bd-exp-days-normal { color: #6B7590; }
+  .bd-exp-tag { flex: 0 0 auto; font-size: .64rem; font-weight: 800;
+                letter-spacing: .06em; text-transform: uppercase;
+                padding: .2rem .5rem; border-radius: 999px; white-space: nowrap; }
+  .bd-exp-tag-critical { background: #E3ECFD; color: #16357E; }
+  .bd-exp-tag-warning  { background: #EEF1FE; color: #3B4BD8; }
+  .bd-exp-tag-normal   { background: #F1F3FA; color: #6B7590; }
+
+  /* ---- Empty state ---- */
+  .bd-empty { padding: 1.1rem .9rem; border-radius: 16px; text-align: center;
+              background: #FBFCFF; border: 1px dashed #DDE3F1; }
+  .bd-empty-title { font-size: .84rem; font-weight: 700; color: #4A5573; }
+  .bd-empty-note { font-size: .74rem; color: #8A94AD; margin-top: .2rem; }
+
+  /* ---- Responsif ---- */
+  /* Di layar sempit kolom tabel status ditumpuk dan kartu jadi satu kolom,
+     supaya nama partner tidak terpotong menjadi tidak terbaca. */
+  @media (max-width: 860px) {
+    .bd-track-head { display: none; }
+    .bd-track-row { grid-template-columns: 1fr; gap: .25rem;
+                    padding: .65rem .8rem; }
+    .bd-track-row span { min-width: 0; }
+    .bd-exp-grid { grid-template-columns: 1fr; }
+    .bd-exp-name { white-space: normal; }
+  }
+
+  /* =======================================================================
+     AUDIT KURSOR
+     -----------------------------------------------------------------------
+     Masalah: teks, kartu, metric, dan area sekitar grafik memunculkan
+     kursor resize (ew-resize / ns-resize / col-resize) dan kursor
+     navigasi. Dua penyebabnya:
+       1. Plotly menambah lapisan drag di tepi sumbu -> sudah dimatikan di
+          akarnya lewat dragmode=False + fixedrange=True di charts.py,
+          dan dijaga ulang lewat CSS di bawah.
+       2. Streamlit memberi anchor link otomatis pada heading.
+     Aturannya: hanya elemen yang benar-benar bisa ditekan/diisi/digeser
+     yang boleh punya kursor khusus.
+     ======================================================================= */
+
+  /* Teks & wadah non-interaktif -> kursor biasa. */
+  .stApp, .block-container,
+  h1, h2, h3, h4, h5, h6, p, span, small, strong, em, li, dt, dd,
+  [data-testid="stMarkdownContainer"],
+  [data-testid="stMarkdownContainer"] *,
+  [data-testid="stCaptionContainer"],
+  [data-testid="stHeadingWithActionElements"],
+  [data-testid="stVerticalBlock"],
+  [data-testid="stHorizontalBlock"],
+  [data-testid="stVerticalBlock"],
+  [data-testid="stVerticalBlockBorderWrapper"],
+  [data-testid="stMetric"], [data-testid="stMetric"] *,
+  [data-testid="stElementContainer"],
+  [data-testid="stAlert"], [data-testid="stAlert"] * {
+      cursor: default;
+  }
+
+  /* Elemen yang memang bisa ditekan.
+     Catatan: Streamlit sudah tidak memasang data-baseweb, jadi selektor
+     lama itu tidak lagi cocok dengan apa pun. Yang dipakai sekarang adalah
+     data-testid dan atribut ARIA yang benar-benar ada di DOM; bentuk lama
+     tetap disebut supaya versi Streamlit lain tidak ikut rusak. */
+  button, [role="button"], a[href], summary,
+  [role="tab"], [data-testid="stTab"], [data-testid="stTab"] *,
+  button[data-baseweb="tab"], button[data-baseweb="tab"] *,
+  [data-testid="stExpander"] summary,
+  [data-testid="stExpander"] summary *,
+  [data-testid="stButton"] > button,
+  [data-testid="stButton"] > button *,
+  [data-testid="stSegmentedControl"] label,
+  [data-testid="stSegmentedControl"] button,
+  [data-testid="stButtonGroup"] button,
+  [role="combobox"], [role="combobox"] *,
+  [role="option"], [role="listbox"] li,
+  div[data-baseweb="select"], div[data-baseweb="select"] *,
+  label[data-baseweb="checkbox"], label[data-baseweb="radio"],
+  [data-testid="stCheckbox"] label, [data-testid="stRadio"] label,
+  /* Tanpa awalan tag. Beberapa elemen Streamlit bukan <div> - pemicu
+     tooltip salah satunya - sehingga selektor yang diawali "div" tidak
+     pernah cocok dan kursornya jatuh ke aturan teks biasa. */
+  [data-testid="stTooltipHoverTarget"],
+  [data-testid="stTooltipHoverTarget"] *,
+  [data-testid="stTooltipIcon"],
+  [data-testid="stTooltipIcon"] * {
+      cursor: pointer;
+  }
+
+  /* Input teks tetap caret, bukan kursor panah. */
+  input[type="text"], input[type="password"], input[type="number"],
+  input[type="search"], textarea {
+      cursor: text;
+  }
+
+  /* Anchor link otomatis pada heading: penyebab kursor "navigasi" muncul
+     di judul yang sebenarnya bukan tautan. */
+  [data-testid="stHeadingWithActionElements"] a,
+  [data-testid="stHeaderActionElements"] {
+      display: none !important;
+  }
+
+  /* Jaring pengaman untuk Plotly: kalau versi Plotly menambah lapisan drag
+     baru, kursornya tetap tidak berubah menjadi panah dobel. */
+  .js-plotly-plot .plotly .draglayer,
+  .js-plotly-plot .plotly .draglayer *,
+  .js-plotly-plot .plotly .drag,
+  .js-plotly-plot .plotly .cursor-ew-resize,
+  .js-plotly-plot .plotly .cursor-ns-resize,
+  .js-plotly-plot .plotly .cursor-nesw-resize,
+  .js-plotly-plot .plotly .cursor-nwse-resize,
+  .js-plotly-plot .plotly .cursor-col-resize,
+  .js-plotly-plot .plotly .cursor-row-resize,
+  .js-plotly-plot .plotly .cursor-move,
+  .js-plotly-plot .plotly .cursor-crosshair,
+  .js-plotly-plot .plotly .nsewdrag {
+      cursor: default !important;
+  }
+
+  /* Komponen buatan sendiri: semuanya teks, bukan tombol. */
+  .bd-title, .bd-subtitle, .bd-card-title, .bd-card-sub,
+  .bd-pill, .bd-pills, .bd-list, .bd-row, .bd-row-main, .bd-row-name,
+  .bd-row-meta, .bd-row-tag, .bd-avatar, .bd-brand, .bd-brand-sub,
+  .bd-brand-mark, .bd-badge, .bd-track, .bd-track-head, .bd-track-row,
+  .bd-track-name, .bd-track-meta, .bd-track-date,
+  .bd-exp-grid, .bd-exp-card, .bd-exp-card *,
+  .bd-section, .bd-section-title, .bd-section-sub,
+  .bd-side-group, .bd-side-group-title, .bd-access, .bd-access *,
+  .bd-empty, .bd-empty * {
+      cursor: default;
+  }
+""" + ICON_FONT_CSS + """
 </style>
 """
 st.markdown(STYLE, unsafe_allow_html=True)
@@ -499,6 +1055,81 @@ def load_frames(reference_date: pd.Timestamp) -> dict[str, pd.DataFrame]:
             preparation.load_revenue_grid(sheets.NATIONAL_INKIND_WORKSHEET)
         ),
     }
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_post_partnership_frames() -> dict[str, object]:
+    """Ambil National_1.2 (Partnership Report) & PSC (Partnership Survey).
+
+    Dipisahkan dari load_frames() dengan sengaja: kedua tab ini baru, dan
+    kalau salah satunya bermasalah dashboard yang sudah berjalan tidak boleh
+    ikut mati. Kegagalan dikembalikan sebagai daftar KUNCI SUMBER, bukan
+    sebagai exception atau pesan teknis - jadi tidak ada stack trace, nama
+    tab, atau URL spreadsheet yang bocor ke UI.
+
+    Returns:
+        dict: df_report, df_survey, unavailable (kunci sumber yang gagal).
+    """
+    result: dict[str, object] = {
+        "df_report": pd.DataFrame(),
+        "df_survey": pd.DataFrame(),
+        "unavailable": [],
+    }
+
+    for key, source, build in (
+        ("df_report", metrics.POST_SOURCE_REPORT, preparation.build_df_report),
+        ("df_survey", metrics.POST_SOURCE_SURVEY, preparation.build_df_survey),
+    ):
+        try:
+            result[key] = build()
+        except Exception:  # noqa: BLE001 - detail teknis sengaja tidak diteruskan
+            result["unavailable"].append(source)
+
+    return result
+
+
+def friendly_load_error(exc: BaseException) -> str:
+    """Terjemahkan kegagalan pengambilan data menjadi pesan yang bisa ditindak.
+
+    Hanya JENIS masalah yang disampaikan, bukan pesan asli dari pustaka.
+    Pesan gspread/Google API bisa memuat URL spreadsheet, dan aturan
+    proyek ini melarang URL privat muncul di UI maupun log - jadi teks
+    exception tidak pernah diteruskan ke pengguna.
+    """
+    # Nama kelas dan kode status aman: keduanya tidak memuat URL atau kredensial.
+    name = type(exc).__name__
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    text = f"{name} {status or ''}"
+
+    if status == 429 or "Quota" in name or "RateLimit" in name:
+        return (
+            "Kuota Google Sheets API sedang terlampaui. Data akan bisa "
+            "ditarik lagi dalam beberapa menit — coba tekan Muat ulang data."
+        )
+    if status in (401, 403):
+        return (
+            "Akses ke spreadsheet ditolak. Pastikan Service Account masih "
+            "punya izin Viewer ke Active ESSM dan National Mirror."
+        )
+    if status == 404 or "WorksheetNotFound" in name or "SpreadsheetNotFound" in name:
+        return (
+            "Spreadsheet atau tab yang dibutuhkan tidak ditemukan. Periksa "
+            "apakah nama tab di sumber berubah."
+        )
+    if "RuntimeError" in name:
+        return (
+            "Konfigurasi sumber data belum lengkap. Lengkapi `.env` "
+            "(atau Streamlit Secrets) dan `credentials.json`."
+        )
+    if "Transport" in text or "Connection" in name or "Timeout" in name:
+        return (
+            "Koneksi ke Google Sheets gagal. Periksa jaringan lalu tekan "
+            "Muat ulang data."
+        )
+    return (
+        "Gagal menarik data dari Google Sheets. Periksa `.env`, "
+        "`credentials.json`, dan akses Viewer ke kedua spreadsheet."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -540,8 +1171,14 @@ def card_title(title: str, subtitle: str = "") -> None:
 
 
 def card(figure, key: str | None = None, title: str = "", subtitle: str = "") -> None:
-    """Satu figure di dalam kartu putih."""
-    with st.container(border=True):
+    """Satu figure di dalam kartu putih.
+
+    key dipakai dua kali: untuk st.plotly_chart dan - dengan awalan
+    "bdcard_" - sebagai key container. Awalan itu yang menjadi pegangan CSS
+    (kelas st-key-bdcard_...), karena parameter key adalah bagian resmi API
+    Streamlit, sedangkan struktur DOM internalnya berubah antar versi.
+    """
+    with st.container(border=True, key=f"bdcard_{key}" if key else None):
         if title:
             card_title(title, subtitle)
         st.plotly_chart(
@@ -588,12 +1225,177 @@ def attention_list(rows: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Format tampilan: post-partnership & masa berakhir
+# ---------------------------------------------------------------------------
+
+# Gaya badge per status. Lambang teks selalu ikut, jadi statusnya tetap
+# terbaca tanpa harus membedakan warna.
+STATUS_BADGES: dict[str, tuple[str, str]] = {
+    metrics.POST_STATUS_COMPLETED: ("done", "✓"),
+    metrics.POST_STATUS_MISSING: ("missing", "!"),
+    metrics.POST_STATUS_NOT_REQUIRED: ("wait", "·"),
+    metrics.POST_STATUS_NO_END_DATE: ("none", "–"),
+    metrics.POST_STATUS_UNAVAILABLE: ("none", "?"),
+}
+
+# Nama sumber yang boleh ditampilkan ke pengguna. Nama tab spreadsheet dan
+# URL-nya tidak pernah muncul di UI.
+SOURCE_LABELS: dict[str, str] = {
+    metrics.POST_SOURCE_REPORT: "Partnership Report",
+    metrics.POST_SOURCE_SURVEY: "Partnership Survey",
+}
+
+URGENCY_TAGS: dict[str, str] = {
+    metrics.URGENCY_CRITICAL: "Ending Soon",
+    metrics.URGENCY_WARNING: "Ending Soon",
+    metrics.URGENCY_NORMAL: "On Track",
+}
+
+
+def text_or_none(value) -> str | None:
+    """Teks bersih dari sel yang bisa berisi None, NaN, atau string kosong."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return text or None
+
+
+def status_badge(status: str) -> str:
+    """Potongan HTML badge untuk satu status post-partnership."""
+    kind, mark = STATUS_BADGES.get(status, ("none", "–"))
+    return (
+        f'<span class="bd-badge bd-badge-{kind}">'
+        f'<span class="bd-badge-mark">{html.escape(mark)}</span>'
+        f"{html.escape(str(status))}</span>"
+    )
+
+
+def section_title(title: str, subtitle: str = "") -> None:
+    """Judul section di dalam tab."""
+    st.markdown(
+        f'<div class="bd-section"><p class="bd-section-title">{html.escape(title)}</p>'
+        + (
+            f'<p class="bd-section-sub">{html.escape(subtitle)}</p>'
+            if subtitle
+            else ""
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def empty_state(title: str, note: str = "") -> None:
+    """Pesan ramah saat sebuah section tidak punya data untuk ditampilkan."""
+    st.markdown(
+        f'<div class="bd-empty"><div class="bd-empty-title">{html.escape(title)}</div>'
+        + (f'<div class="bd-empty-note">{html.escape(note)}</div>' if note else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def status_table(rows: list[dict]) -> None:
+    """Tabel status berbadge: Partner | Tanggal | Survey | Report.
+
+    Semua nilai berasal dari spreadsheet, jadi selalu di-escape sebelum
+    masuk HTML.
+    """
+    if not rows:
+        return
+
+    head = (
+        '<div class="bd-track-head">'
+        "<span>Partner</span><span>Partnership End</span>"
+        "<span>Partnership Survey</span><span>Partnership Report</span>"
+        "</div>"
+    )
+
+    body = []
+    for row in rows:
+        full = row.get("full", False)
+        meta = row.get("meta") or ""
+        body.append(
+            f'<div class="bd-track-row{" bd-track-row-full" if full else ""}">'
+            "<span>"
+            f'<span class="bd-track-name">{html.escape(str(row["name"]))}</span>'
+            + (f'<span class="bd-track-meta">{html.escape(meta)}</span>' if meta else "")
+            + "</span>"
+            f'<span class="bd-track-date">{html.escape(str(row["end_label"]))}</span>'
+            f'<span>{status_badge(row["survey_status"])}</span>'
+            f'<span>{status_badge(row["report_status"])}</span>'
+            "</div>"
+        )
+
+    st.markdown(
+        f'<div class="bd-track">{head}{"".join(body)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def expiry_cards(rows: list[dict]) -> None:
+    """Kartu partner yang paling dekat berakhir, urut paling mendesak dulu."""
+    if not rows:
+        empty_state(
+            "Tidak ada partnership aktif yang mendekati akhir masa berlaku.",
+            "Kartu akan muncul begitu ada kontrak yang menuju tanggal berakhir.",
+        )
+        return
+
+    cards = []
+    for row in rows:
+        urgency = row["urgency"]
+        pic = row.get("pic")
+        # PIC hanya tersedia di National_1.2; kalau tidak ketemu, baris ini
+        # diisi keterangan lain (stakeholder) daripada menampilkan PIC kosong.
+        subtitle = f"PIC: {pic}" if pic else str(row.get("meta") or "")
+        cards.append(
+            f'<div class="bd-exp-card bd-exp-{urgency}">'
+            '<div class="bd-exp-top">'
+            f'<span class="bd-exp-name">{html.escape(str(row["name"]))}</span>'
+            f'<span class="bd-exp-tag bd-exp-tag-{urgency}">'
+            f'{html.escape(URGENCY_TAGS.get(urgency, "On Track"))}</span>'
+            "</div>"
+            f'<div class="bd-exp-pic">{html.escape(subtitle)}</div>'
+            '<div class="bd-exp-label">Partnership ends</div>'
+            f'<div class="bd-exp-date">{html.escape(str(row["end_label"]))}</div>'
+            f'<div class="bd-exp-days bd-exp-days-{urgency}">'
+            f'{html.escape(str(row["days_label"]))}</div>'
+            "</div>"
+        )
+
+    st.markdown(
+        f'<div class="bd-exp-grid">{"".join(cards)}</div>', unsafe_allow_html=True
+    )
+
+
+# ---------------------------------------------------------------------------
 # Sidebar: pilihan periode
 # ---------------------------------------------------------------------------
 
 
+def sidebar_group(title: str) -> None:
+    """Judul kelompok kontrol di sidebar, dengan garis pemisah halus."""
+    st.markdown(
+        '<div class="bd-side-group">'
+        f'<span class="bd-side-group-title">{html.escape(title)}</span>'
+        '<span class="bd-side-group-line"></span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def sidebar_controls() -> tuple[object, bool]:
-    """Kontrol periode. Return (pilihan untuk periods.apply_period, minta_refresh)."""
+    """Kontrol periode. Return (pilihan untuk periods.apply_period, minta_refresh).
+
+    Tata letaknya dikelompokkan menjadi Dashboard Controls / Data Source /
+    Access. Seluruh widget dan nilai default TIDAK berubah dari sebelumnya:
+    hanya pembungkus visual dan pengelompokannya yang baru.
+    """
     with st.sidebar:
         st.markdown(
             '<div class="bd-brand-mark">BD</div>'
@@ -601,35 +1403,62 @@ def sidebar_controls() -> tuple[object, bool]:
             '<div class="bd-brand-sub">Business Development Analytics</div>',
             unsafe_allow_html=True,
         )
-        st.divider()
 
-        mode = st.segmented_control(
-            "Rentang waktu",
-            [RANGE_ALL, RANGE_QUARTER, RANGE_MONTH],
-            default=RANGE_ALL,
-            key="range_mode",
-        ) or RANGE_ALL
+        # ---- Dashboard Controls ----
+        sidebar_group("Dashboard Controls")
+        with st.container(border=True, key="side_controls"):
+            mode = st.segmented_control(
+                "Rentang waktu",
+                [RANGE_ALL, RANGE_QUARTER, RANGE_MONTH],
+                default=RANGE_ALL,
+                key="range_mode",
+            ) or RANGE_ALL
 
-        selection: object = "all"
-        if mode == RANGE_QUARTER:
-            labels = {
-                quarter: f"{quarter.replace('QUARTER ', 'Q').replace('#', '')} · "
-                         f"{months[0].title()[:3]}–{months[-1].title()[:3]}"
-                for quarter, months in periods.QUARTER_MONTHS.items()
-            }
-            selection = st.selectbox(
-                "Kuartal", list(periods.QUARTER_MONTHS), index=1,
-                format_func=lambda value: labels[value],
+            selection: object = "all"
+            if mode == RANGE_QUARTER:
+                labels = {
+                    quarter: f"{quarter.replace('QUARTER ', 'Q').replace('#', '')} · "
+                             f"{months[0].title()[:3]}–{months[-1].title()[:3]}"
+                    for quarter, months in periods.QUARTER_MONTHS.items()
+                }
+                selection = st.selectbox(
+                    "Kuartal", list(periods.QUARTER_MONTHS), index=1,
+                    format_func=lambda value: labels[value],
+                )
+            elif mode == RANGE_MONTH:
+                selection = st.selectbox(
+                    "Bulan", list(periods.TERM_MONTHS),
+                    index=periods.TERM_MONTHS.index("august"),
+                    format_func=lambda value: str(value).title(),
+                )
+
+        # ---- Data Source ----
+        sidebar_group("Data Source")
+        with st.container(border=True, key="side_source"):
+            st.markdown(
+                '<p class="bd-access-note" style="margin:0 0 .45rem 0;">'
+                'ESSM mirror · cache 15 menit</p>',
+                unsafe_allow_html=True,
             )
-        elif mode == RANGE_MONTH:
-            selection = st.selectbox(
-                "Bulan", list(periods.TERM_MONTHS),
-                index=periods.TERM_MONTHS.index("august"),
-                format_func=lambda value: str(value).title(),
+            refresh = st.button("Muat ulang data", width="stretch", type="secondary")
+
+        # ---- Access ----
+        sidebar_group("Access")
+        with st.container(border=True, key="side_access"):
+            if IS_MEMBER:
+                dot, name, note = "member", "AIESEC Member", "Akses penuh data internal"
+            else:
+                dot, name, note = "anon", "Anonymous", "Data internal disamarkan"
+            st.markdown(
+                '<div class="bd-access">'
+                f'<span class="bd-access-dot bd-access-dot-{dot}"></span>'
+                '<span class="bd-access-main">'
+                f'<span class="bd-access-name">{name}</span><br>'
+                f'<span class="bd-access-note">{note}</span>'
+                "</span></div>",
+                unsafe_allow_html=True,
             )
 
-        st.divider()
-        refresh = st.button("Muat ulang data", width="stretch", type="secondary")
     return selection, refresh
 
 
@@ -835,7 +1664,7 @@ def tab_overview(data: dict) -> None:
         )
 
     with watchlist:
-        with st.container(border=True):
+        with st.container(border=True, key="bdcard_watchlist"):
             card_title("Perlu perhatian", "Kontrak terdekat berakhir")
             attention_list(data["watchlist"])
 
@@ -881,7 +1710,7 @@ def tab_market_research(data: dict) -> None:
             title="Tren MR per bulan",
             subtitle="Urut masa jabatan (February → January)",
         )
-        with st.container(border=True):
+        with st.container(border=True, key="bdcard_mr_detail"):
             card_title("Rincian per PIC")
             st.dataframe(
                 data["mr_by_pic"].rename(
@@ -1036,29 +1865,210 @@ def tab_documents(data: dict) -> None:
         subtitle="v = dokumen ada · urut dari yang paling banyak kosong",
     )
 
-    with st.expander("Kontrak yang paling dekat berakhir"):
-        detail = data["expiry_detail"]
-        soon = detail[
-            detail["expiry_category"].isin(
-                [metrics.EXPIRY_EXPIRED, metrics.EXPIRY_THIS_MONTH, metrics.EXPIRY_SOON]
-            )
-        ]
-        st.dataframe(
-            soon[
-                ["partner_name", "end_month_raw", "months_remaining",
-                 "expiry_category", "is_active"]
-            ].rename(
-                columns={
-                    "partner_name": "Partner",
-                    "end_month_raw": "Berakhir",
-                    "months_remaining": "Sisa bulan",
-                    "expiry_category": "Kategori",
-                    "is_active": "Aktif",
-                }
-            ),
-            hide_index=True,
-            width="stretch",
+    section_partnership_report_survey(data)
+    section_completed_partnership(data)
+    section_expiring_partners(data)
+
+
+# ---------------------------------------------------------------------------
+# Section baru: post-partnership & masa berakhir
+# ---------------------------------------------------------------------------
+
+
+def source_warnings(data: dict) -> None:
+    """Peringatan ramah kalau salah satu sumber post-partnership tak terbaca."""
+    for source in data.get("post_unavailable", []):
+        label = SOURCE_LABELS.get(source, "Post-partnership")
+        st.warning(f"{label} data is currently unavailable.", icon=":material/info:")
+
+
+def section_partnership_report_survey(data: dict) -> None:
+    """Partnership Report & Survey Tracker — SELURUH partner.
+
+    Menunjukkan dengan jelas bahwa kedua dokumen ini hanya ditagih setelah
+    masa partnership berakhir: partner aktif tampil sebagai "Not Required
+    Yet", bukan "Missing".
+    """
+    with st.container(border=True, key="bdcard_section_report_survey"):
+        section_title(
+            "Partnership Report & Survey Tracker",
+            "Kedua dokumen ini ditagih begitu bulan berakhir partnership "
+            "tiba — termasuk partner yang berakhir bulan ini.",
         )
+        source_warnings(data)
+
+        status = data["post_status"]
+        if status.empty:
+            empty_state(
+                "Belum ada data partner untuk dilacak.",
+                "Tracker akan terisi begitu National 1.1 memuat partner.",
+            )
+            return
+
+        counts = status["report_status"].value_counts()
+
+        def status_count(label: str) -> str:
+            return protected(number(int(counts.get(label, 0))))
+
+        items: list[tuple[str, str]] = [
+            ("ok", f"{status_count(metrics.POST_STATUS_COMPLETED)} report completed"),
+            ("alert", f"{status_count(metrics.POST_STATUS_MISSING)} report missing"),
+            ("info", f"{status_count(metrics.POST_STATUS_NOT_REQUIRED)} belum wajib "
+                     "(belum masuk bulan berakhir)"),
+            ("muted", f"{status_count(metrics.POST_STATUS_NO_END_DATE)} "
+                      "tanpa tanggal akhir"),
+        ]
+        blocked = int(counts.get(metrics.POST_STATUS_UNAVAILABLE, 0))
+        if blocked:
+            items.append(
+                ("muted", f"{protected(number(blocked))} belum bisa dinilai "
+                          "(sumber tidak terbaca)")
+            )
+        pills(items)
+
+        early = int(status["report_submitted_early"].sum())
+        if early:
+            st.caption(
+                f"{protected(number(early))} partner sudah mengumpulkan "
+                "Partnership Report sebelum bulan berakhirnya tiba. Statusnya "
+                "tetap Not Required Yet karena belum ditagih."
+            )
+
+        # Tinggi dibatasi supaya daftar seluruh partner tidak mendorong
+        # section di bawahnya terlalu jauh; isinya bisa digulir.
+        with st.container(height=360, border=False):
+            status_table(post_status_rows(status))
+
+
+def section_completed_partnership(data: dict) -> None:
+    """Completed Partnership Tracker — hanya partner yang sudah selesai."""
+    with st.container(border=True, key="bdcard_section_completed"):
+        section_title(
+            "Completed Partnership Tracker",
+            "Partnership yang sudah memasuki atau melewati bulan "
+            f"berakhirnya per {data['frame'].reference_date:%B %Y}.",
+        )
+        source_warnings(data)
+
+        tracker = data["post_tracker"]
+        summary = data["post_summary"]
+
+        if tracker.empty:
+            empty_state(
+                "No completed partnerships found for the selected period.",
+                "Partnership yang bulan berakhirnya belum tiba tidak "
+                "ditampilkan di section ini.",
+            )
+            return
+
+        metric_columns = st.columns(5, gap="small")
+        with metric_columns[0]:
+            st.metric(
+                "Completed Partnerships",
+                protected(number(summary["completed_partnerships"])),
+                delta="bulan berakhir sudah tiba",
+                delta_color="primary", delta_arrow="off", border=True,
+                help="Partner yang bulan berakhir partnership-nya sudah tiba "
+                     "atau terlewat pada periode yang dipilih.",
+            )
+        with metric_columns[1]:
+            st.metric(
+                "Survey Completed",
+                protected(number(summary["survey_completed"])),
+                delta=f"dari {number(summary['completed_partnerships'])} partnership"
+                if IS_MEMBER else "dari XXX partnership",
+                delta_color="blue", delta_arrow="off", border=True,
+                help="Nama partner ditemukan pada respons Partnership Survey (PSC).",
+            )
+        with metric_columns[2]:
+            st.metric(
+                "Report Completed",
+                protected(number(summary["report_completed"])),
+                delta=f"dari {number(summary['completed_partnerships'])} partnership"
+                if IS_MEMBER else "dari XXX partnership",
+                delta_color="primary", delta_arrow="off", border=True,
+                help="Dokumen Post-Partnership Report sudah tercatat di "
+                     "National 1.2.",
+            )
+        with metric_columns[3]:
+            st.metric(
+                "Fully Completed",
+                protected(number(summary["fully_completed"])),
+                delta="survey dan report lengkap",
+                delta_color="blue", delta_arrow="off", border=True,
+                help="Partner yang Partnership Survey DAN Partnership "
+                     "Report-nya sudah ada.",
+            )
+        with metric_columns[4]:
+            st.metric(
+                "Post-Partnership Completion",
+                protected(percent(summary["completion_percent"])),
+                delta=(
+                    f"{summary['survey_completed'] + summary['report_completed']}"
+                    f" / {summary['required_documents']} dokumen"
+                    if IS_MEMBER
+                    else "XXX / XXX dokumen"
+                ),
+                delta_color="primary", delta_arrow="off", border=True,
+                help="(survey selesai + report selesai) dibagi "
+                     "(partnership selesai x 2). Partner aktif tidak ikut "
+                     "dihitung sebagai penyebut.",
+            )
+
+        detail, chart = st.columns([1.6, 1], gap="small")
+        with detail:
+            status_table(post_tracker_rows(tracker))
+            recorded_gap = summary["report_recorded_without_document"]
+            if recorded_gap:
+                st.caption(
+                    f"{protected(number(recorded_gap))} partner sudah tercatat "
+                    "di National 1.2 tetapi kolom dokumen laporannya masih "
+                    "kosong, jadi laporannya dihitung belum ada."
+                )
+        with chart:
+            st.plotly_chart(
+                charts.post_partnership_bar(
+                    data["post_completeness"], title=None, description=""
+                ),
+                width="stretch", theme=None, config=PLOTLY_CONFIG,
+                key="dc_post_bar",
+            )
+
+
+def section_expiring_partners(data: dict) -> None:
+    """Partner yang partnership-nya akan segera berakhir, dalam kartu."""
+    with st.container(border=True, key="bdcard_section_expiring"):
+        section_title(
+            "Partnership yang segera berakhir",
+            "Urut dari yang paling dekat berakhir. Hanya partnership aktif.",
+        )
+
+        rows = expiring_card_rows(data["expiring"])
+        if rows:
+            critical = sum(
+                1 for row in rows if row["urgency"] == metrics.URGENCY_CRITICAL
+            )
+            warning = sum(
+                1 for row in rows if row["urgency"] == metrics.URGENCY_WARNING
+            )
+            items: list[tuple[str, str]] = []
+            if critical:
+                items.append(
+                    ("alert", f"{protected(number(critical))} berakhir dalam "
+                              f"{metrics.EXPIRY_CRITICAL_DAYS} hari atau kurang")
+                )
+            if warning:
+                items.append(
+                    ("info", f"{protected(number(warning))} berakhir dalam "
+                             f"{metrics.EXPIRY_CRITICAL_DAYS + 1}–"
+                             f"{metrics.EXPIRY_WARNING_DAYS} hari")
+                )
+            items.append(
+                ("muted", f"{protected(number(len(rows)))} partnership aktif dipantau")
+            )
+            pills(items)
+
+        expiry_cards(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1121,8 +2131,136 @@ def watchlist_rows(expiry_detail: pd.DataFrame, limit: int = 6) -> list[dict]:
     return rows
 
 
-def build_view_data(frame: periods.PeriodFrames, today: pd.Timestamp) -> dict:
-    """Semua angka & tabel yang dipakai halaman, semuanya lewat metrics.py."""
+# ---------------------------------------------------------------------------
+# Penyiapan baris tampilan: post-partnership & masa berakhir
+# ---------------------------------------------------------------------------
+
+
+def date_label(value) -> str:
+    """Tanggal panjang yang enak dibaca: 30 September 2026."""
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{pd.Timestamp(value):%d %B %Y}"
+
+
+def days_remaining_label(days) -> str:
+    """Sisa hari dalam bentuk kalimat pendek."""
+    if days is None or pd.isna(days):
+        return "No end date"
+    remaining = int(days)
+    if remaining == 0:
+        return "Ends today"
+    if remaining == 1:
+        return "1 day remaining"
+    return f"{remaining} days remaining"
+
+
+def end_label(end_date, end_month_raw) -> str:
+    """Label tanggal akhir. Kembali ke teks mentah sheet kalau tidak terurai."""
+    if end_date is not None and not pd.isna(end_date):
+        return date_label(end_date)
+    raw = text_or_none(end_month_raw)
+    return raw or "Tanpa tanggal akhir"
+
+
+def post_status_rows(status: pd.DataFrame) -> list[dict]:
+    """Baris tabel "Partnership Report & Survey Tracker" (semua partner)."""
+    if status is None or status.empty:
+        return []
+    rows: list[dict] = []
+    for item in status.itertuples():
+        stakeholder = text_or_none(item.stakeholder) or "Tanpa stakeholder"
+        rows.append(
+            {
+                "name": item.partner_name,
+                "meta": stakeholder,
+                "end_label": end_label(item.end_date, item.end_month_raw),
+                "survey_status": item.survey_status,
+                "report_status": item.report_status,
+                "full": bool(
+                    item.survey_status == metrics.POST_STATUS_COMPLETED
+                    and item.report_status == metrics.POST_STATUS_COMPLETED
+                ),
+            }
+        )
+    return rows
+
+
+def since_end_label(days_since_end, is_final_month: bool) -> str:
+    """Keterangan singkat sejak/menuju akhir partnership.
+
+    Sejak aturan post-partnership memakai BULAN, partner yang berakhir bulan
+    ini sudah masuk tracker walau tanggalnya belum tiba - jadi sisa harinya
+    bisa negatif dan tidak boleh ditulis "x hari lalu".
+    """
+    if days_since_end is None or pd.isna(days_since_end):
+        return "berakhir bulan ini" if is_final_month else ""
+    days = int(days_since_end)
+    if days > 0:
+        return f"selesai {days} hari lalu"
+    if days == 0:
+        return "berakhir hari ini"
+    return f"berakhir bulan ini · {abs(days)} hari lagi"
+
+
+def post_tracker_rows(tracker: pd.DataFrame) -> list[dict]:
+    """Baris tabel "Completed Partnership Tracker" (hanya yang sudah ditagih)."""
+    if tracker is None or tracker.empty:
+        return []
+    rows: list[dict] = []
+    for item in tracker.itertuples():
+        stakeholder = text_or_none(item.stakeholder) or "Tanpa stakeholder"
+        since = since_end_label(
+            item.days_since_end, bool(getattr(item, "is_final_month", False))
+        )
+        rows.append(
+            {
+                "name": item.partner_name,
+                "meta": f"{stakeholder} · {since}" if since else stakeholder,
+                "end_label": end_label(item.end_date, item.end_month_raw),
+                "survey_status": item.survey_status,
+                "report_status": item.report_status,
+                "full": bool(item.is_fully_completed),
+            }
+        )
+    return rows
+
+
+def expiring_card_rows(expiring: pd.DataFrame) -> list[dict]:
+    """Baris kartu partner yang segera berakhir. Urutan dari metrics dijaga."""
+    if expiring is None or expiring.empty:
+        return []
+    rows: list[dict] = []
+    for item in expiring.itertuples():
+        stakeholder = text_or_none(item.stakeholder) or "Tanpa stakeholder"
+        rows.append(
+            {
+                "name": item.partner_name,
+                "pic": text_or_none(item.pic_aiesec),
+                "meta": stakeholder,
+                "end_label": end_label(item.end_date, item.end_month_raw),
+                "days_label": days_remaining_label(item.days_remaining),
+                "urgency": item.urgency,
+            }
+        )
+    return rows
+
+
+def build_view_data(
+    frame: periods.PeriodFrames,
+    today: pd.Timestamp,
+    df_report: pd.DataFrame | None = None,
+    df_survey: pd.DataFrame | None = None,
+    post_unavailable: list[str] | None = None,
+) -> dict:
+    """Semua angka & tabel yang dipakai halaman, semuanya lewat metrics.py.
+
+    df_report (National_1.2) & df_survey (PSC) TIDAK disaring per bulan.
+    Status post-partnership adalah metrik POSISI seperti Active Partners:
+    artinya hanya ada relatif terhadap satu tanggal, jadi yang dipakai
+    adalah frame.reference_date - bukan penyaringan baris per periode
+    (lihat aturan 4 di periods.py).
+    """
     summary = metrics.get_kpi_summary(
         frame.df_mr, frame.df_partner, frame.df_conversion,
         frame.df_financial, frame.df_inkind,
@@ -1130,6 +2268,15 @@ def build_view_data(frame: periods.PeriodFrames, today: pd.Timestamp) -> dict:
     )
     expiry_detail = metrics.get_partnership_expiry(
         frame.df_partner, reference_date=frame.reference_date
+    )
+    post_unavailable = list(post_unavailable or [])
+    post_tracker = metrics.get_post_partnership_tracker(
+        frame.df_partner, df_report, df_survey,
+        reference_date=frame.reference_date,
+        unavailable=post_unavailable,
+    )
+    expiring = metrics.get_expiring_partners(
+        frame.df_partner, reference_date=frame.reference_date, df_report=df_report
     )
     return {
         "frame": frame,
@@ -1153,6 +2300,17 @@ def build_view_data(frame: periods.PeriodFrames, today: pd.Timestamp) -> dict:
         "expiry_detail": expiry_detail,
         "active_trend": active_partner_trend(frame.df_partner, today),
         "watchlist": watchlist_rows(expiry_detail),
+        # ---- post-partnership ----
+        "post_tracker": post_tracker,
+        "post_summary": metrics.get_post_partnership_summary(post_tracker),
+        "post_completeness": metrics.get_post_partnership_completeness(post_tracker),
+        "post_status": metrics.get_partnership_document_status(
+            frame.df_partner, df_report, df_survey,
+            reference_date=frame.reference_date,
+            unavailable=post_unavailable,
+        ),
+        "post_unavailable": post_unavailable,
+        "expiring": expiring,
     }
 
 def mask_anonymous_data(data: dict) -> dict:
@@ -1498,6 +2656,101 @@ def mask_anonymous_data(data: dict) -> dict:
 
         masked["completeness"] = completeness
 
+    # =====================================================
+    # POST-PARTNERSHIP (Report & Survey)
+    # =====================================================
+    #
+    # Nama partner disamarkan. STATUS tidak diubah: statusnya bukan data
+    # sensitif dan justru bagian yang ingin diperlihatkan di mode publik.
+    # Tanggal akhir partnership disembunyikan karena itu isi kontrak.
+
+    for key in ["post_tracker", "post_status"]:
+
+        df = masked.get(key)
+
+        if df is not None and not df.empty:
+
+            df = anonymize_names(
+                df,
+                "partner_name",
+                "Partner"
+            )
+
+            for column in ["stakeholder", "survey_source_name", "report_source_name"]:
+                if column in df.columns:
+                    df[column] = "Hidden"
+
+            if "end_date" in df.columns:
+                df["end_date"] = pd.NaT
+
+            if "end_month_raw" in df.columns:
+                df["end_month_raw"] = "Hidden"
+
+            if "days_since_end" in df.columns:
+                df["days_since_end"] = 30
+
+            # is_final_month tidak disamarkan: nilainya boolean dan tidak
+            # menunjukkan tanggal apa pun, sementara label barisnya butuh itu
+            # agar tidak salah menulis "x hari lalu".
+
+            masked[key] = df
+
+    expiring = masked.get("expiring")
+
+    if expiring is not None and not expiring.empty:
+
+        expiring = anonymize_names(
+            expiring,
+            "partner_name",
+            "Partner"
+        )
+
+        expiring["stakeholder"] = "Internal partnership · details hidden"
+
+        # PIC adalah nama anggota AIESEC -> tidak boleh muncul di mode publik.
+        if "pic_aiesec" in expiring.columns:
+            expiring["pic_aiesec"] = None
+
+        if "end_date" in expiring.columns:
+            expiring["end_date"] = pd.NaT
+
+        if "end_month_raw" in expiring.columns:
+            expiring["end_month_raw"] = "Hidden"
+
+        # Sisa hari ikut disamarkan: kalau dibiarkan asli, tanggal akhir
+        # kontrak bisa dihitung ulang dari angka itu. Nilai penggantinya
+        # tetap sejalan dengan tingkat urgensinya supaya kartu tidak
+        # menjadi tidak konsisten dengan badge-nya.
+        if "days_remaining" in expiring.columns and "urgency" in expiring.columns:
+            demo_days = {
+                metrics.URGENCY_CRITICAL: 5,
+                metrics.URGENCY_WARNING: 20,
+                metrics.URGENCY_NORMAL: 60,
+            }
+            expiring["days_remaining"] = expiring["urgency"].map(
+                lambda level: demo_days.get(level, 60)
+            )
+
+        masked["expiring"] = expiring
+
+    post_completeness = masked.get("post_completeness")
+
+    if post_completeness is not None and not post_completeness.empty:
+
+        post_completeness = post_completeness.copy()
+
+        numeric_columns = post_completeness.select_dtypes(
+            include="number"
+        ).columns
+
+        for column in numeric_columns:
+            post_completeness[column] = demo_values(
+                len(post_completeness),
+                start=1
+            )
+
+        masked["post_completeness"] = post_completeness
+
     return masked
 
 # ---------------------------------------------------------------------------
@@ -1509,20 +2762,32 @@ def main() -> None:
     selection, refresh = sidebar_controls()
     if refresh:
         load_frames.clear()
+        load_post_partnership_frames.clear()
 
     today = pd.Timestamp.today().normalize()
     try:
         frames = load_frames(today)
-    except Exception as exc:  # noqa: BLE001 - pesan ramah, detail tetap muncul
-        st.error(
-            "Gagal menarik data dari Google Sheets. Periksa `.env`, "
-            "`credentials.json`, dan akses Viewer ke kedua spreadsheet."
-        )
-        st.exception(exc)
+    except Exception as exc:  # noqa: BLE001 - pesan ramah, detail tidak diteruskan
+        # st.exception() sengaja TIDAK dipakai: stack trace gspread memuat
+        # pesan API yang bisa berisi URL spreadsheet, dan aturan proyek ini
+        # melarang rahasia atau URL privat muncul di UI maupun log.
+        # Yang ditampilkan hanya penyebab yang bisa ditindaklanjuti.
+        st.error(friendly_load_error(exc), icon=":material/error:")
         return
 
+    # Sumber post-partnership dimuat terpisah: kalau National_1.2 atau PSC
+    # bermasalah, dashboard tetap tampil dan hanya section terkait yang
+    # memberi keterangan bahwa datanya belum tersedia.
+    post_frames = load_post_partnership_frames()
+
     frame = periods.apply_period(selection, today=today, **frames)
-    data = build_view_data(frame, today)
+    data = build_view_data(
+        frame,
+        today,
+        df_report=post_frames["df_report"],
+        df_survey=post_frames["df_survey"],
+        post_unavailable=post_frames["unavailable"],
+    )
     # Anonymous tidak menerima data asli untuk visualisasi
     if not IS_MEMBER:
         data = mask_anonymous_data(data)
