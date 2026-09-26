@@ -1,78 +1,240 @@
-﻿# Business Development Analytics Dashboard
+# 📊 Business Development Dashboard | AIESEC in BINUS
 
-**Dashboard analitik untuk tim Business Development AIESEC in BINUS.**
+An interactive **Business Development Dashboard** developed to transform partnership data into accessible, structured, and actionable insights.
 
-Proyek ini menyatukan pemantauan aktivitas market research, perkembangan partnership, dan kontribusi partner dalam satu dashboard interaktif. Dirancang untuk membantu tim melihat pencapaian, mengevaluasi progres, serta menentukan tindak lanjut melalui ringkasan metrik dan visualisasi yang mudah dipahami.
+The dashboard was built as an internal monitoring tool for **AIESEC in BINUS**, helping Business Development members monitor partnership performance, document completion, partnership periods, and other key metrics from a centralized interface.
 
-## Tentang Proyek
+🔗 **Live Dashboard:** https://bit.ly/BD2627_Dashboard
 
-Pengelolaan partnership mencakup banyak hal: mencari calon partner, memantau proses kerja sama, mencatat kontribusi, hingga memastikan dokumen dan kontrak tetap terpantau. Dashboard ini memberikan gambaran menyeluruh atas aktivitas tersebut agar tim lebih mudah memahami kondisi Business Development pada periode tertentu.
+---
 
-## Fitur Utama
+## 📌 Overview
 
-| Bagian | Yang ditampilkan |
-| --- | --- |
-| **Ringkasan** | Metrik utama, tren aktivitas, dan daftar partner yang membutuhkan perhatian. |
-| **Market Research** | Perkembangan aktivitas riset per bulan dan kontribusi setiap PIC. |
-| **Partner & Funnel** | Jumlah partner aktif, komposisi stakeholder, tahapan sales funnel, dan conversion rate. |
-| **Revenue** | Financial Revenue dan In-Kind Value, beserta rincian per bulan dan per partner. |
-| **Dokumen & Kontrak** | Kelengkapan dokumen kerja sama, status kontrak, dan masa berakhirnya partnership. |
+Partnership data is often distributed across multiple spreadsheets, making it difficult to quickly monitor performance, document completion, and partnership progress.
 
-Dashboard juga dilengkapi dengan:
+This project transforms existing Business Development data into an interactive dashboard that allows users to explore key metrics and monitor partnership activities more efficiently.
 
-- **Filter periode** untuk melihat seluruh periode, kuartal, atau bulan tertentu.
-- **Grafik interaktif** untuk menjelajahi tren dan melihat detail nilai.
-- **Penanda tindak lanjut** untuk dokumen yang belum lengkap dan kontrak yang mendekati akhir masa berlaku.
-- **Pilihan akses** berupa tampilan Anonymous dengan penyamaran data dan Member Login untuk melihat informasi internal.
+The dashboard integrates with **Google Sheets** as its data source and provides interactive visualizations using **Streamlit** and **Plotly**.
 
-## Metrik yang Dipantau
+---
 
-- **Market Research:** aktivitas riset calon partner yang dilakukan tim.
-- **Active Partners:** partner dengan kerja sama yang masih aktif.
-- **Conversion Rate:** persentase konversi pada tahap penandatanganan kontrak.
-- **Financial Revenue:** kontribusi finansial dari partner.
-- **In-Kind Value:** nilai dukungan berupa barang atau jasa dari partner.
+## ✨ Key Features
 
-Financial Revenue dan In-Kind Value ditampilkan secara terpisah agar kontribusi uang dan dukungan nonuang dapat dibaca dengan jelas.
+### 📈 Market Research Performance
 
-## Teknologi
+Tracks the number of market research activities conducted by each member.
 
-Dibangun menggunakan **Python**, **Streamlit** untuk antarmuka dashboard, **Pandas** untuk pengolahan data, dan **Plotly** untuk visualisasi interaktif.
+Users can filter the data by specific periods to analyze individual and overall performance.
 
-## Menjalankan Secara Lokal
+### 📊 Partnership Conversion Rate
 
-Setelah mengunduh atau melakukan clone repository, buka terminal di folder proyek. Contoh berikut menggunakan PowerShell di Windows:
+Displays partnership conversion metrics based on the selected reporting period, allowing members to quickly monitor Business Development performance.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-```
+### 📁 Document Tracker
 
-Lengkapi `.env` sesuai [template konfigurasi](.env.example), letakkan kredensial Google Service Account pada `credentials.json`, dan pastikan akun tersebut memiliki akses Viewer ke spreadsheet yang digunakan. Untuk Member Login, atur `MEMBER_PASSWORD` di `.streamlit/secrets.toml`.
+Provides centralized monitoring for partnership-related documents and their completion status.
 
-Jalankan dashboard:
+The tracker helps identify documents that have been completed and those that still require follow-up.
 
-```powershell
-python -m streamlit run app.py
-```
+### 🤝 Partnership Completion Monitoring
 
-> Aplikasi memerlukan konfigurasi sumber data internal, termasuk saat menggunakan tampilan Anonymous. Mode ini merupakan pratinjau dengan penyamaran data, bukan demo mandiri yang dapat dijalankan tanpa konfigurasi.
+Tracks partnerships that have reached the end of their collaboration period and monitors post-partnership requirements such as:
 
-## Struktur Singkat
+- Partnership Reports
+- Partnership Surveys
+- Other required partnership documentation
+
+### ⏳ Partnership Period Monitoring
+
+Highlights partnerships approaching their end date, helping members identify collaborations that may require follow-up or renewal actions.
+
+### 🔎 Interactive Filtering
+
+Users can dynamically filter dashboard information based on available reporting periods and other relevant parameters.
+
+---
+
+## 🔐 Data Privacy & Access
+
+This dashboard contains two access modes:
+
+### Member Mode
+
+Authorized members can access the dashboard using authentication and view actual organizational partnership data.
+
+### Public Mode
+
+Public visitors can explore the dashboard using **dummy data** designed to demonstrate the dashboard's functionality without exposing confidential organizational information.
+
+> **Note:** Actual partnership data, credentials, Google Sheets URLs, and other sensitive organizational information are not included in this repository.
+
+---
+
+## 🛠️ Tech Stack
+
+- **Python** — Core programming language
+- **Streamlit** — Dashboard application framework
+- **Plotly** — Interactive data visualization
+- **Pandas** — Data processing and transformation
+- **Google Sheets API** — Dynamic data source integration
+- **Streamlit Secrets** — Secure credential management
+- **Git & GitHub** — Version control
+- **Streamlit Community Cloud** — Application deployment
+
+---
+
+## 🏗️ Project Structure
 
 ```text
 bd-dashboard/
-├── app.py             # Antarmuka dan interaksi dashboard
-├── src/               # Modul analitik dan visualisasi
-├── notebooks/         # Eksplorasi dan analisis
-├── assets/            # Folder aset visual
-├── data/sample/       # Folder yang disiapkan untuk data contoh
-├── requirements.txt   # Dependensi proyek
-└── .env.example       # Template konfigurasi lokal
+│
+├── app.py
+├── requirements.txt
+├── README.md
+│
+├── src/
+│   ├── charts.py
+│   ├── metrics.py
+│   ├── periods.py
+│   ├── preparation.py
+│   └── sheets.py
+│
+├── data/
+│   └── sample/
+│
+├── notebooks/
+│   └── exploration.ipynb
+│
+└── .streamlit/
+    └── config.toml
 ```
 
-## Catatan Data
+### Main Components
 
-Proyek ini dikembangkan untuk kebutuhan Business Development AIESEC in BINUS. Data partner, nilai kontrak, dan dokumen internal tidak disertakan dalam README ini. File konfigurasi pribadi dan kredensial juga dikecualikan dari Git melalui `.gitignore`.
+**`app.py`**  
+Main Streamlit application responsible for the dashboard interface, authentication flow, filters, and page rendering.
+
+**`src/sheets.py`**  
+Handles data extraction and Google Sheets integration.
+
+**`src/preparation.py`**  
+Processes and prepares raw data before analysis.
+
+**`src/metrics.py`**  
+Contains calculations for dashboard metrics and KPIs.
+
+**`src/charts.py`**  
+Handles Plotly chart generation and visualization logic.
+
+**`src/periods.py`**  
+Manages reporting period logic and filtering.
+
+---
+
+## 🚀 Running the Project Locally
+
+### 1. Clone the repository
+
+```bash
+git clone YOUR_GITHUB_REPOSITORY_URL
+cd bd-dashboard
+```
+
+### 2. Create a virtual environment
+
+```bash
+python -m venv .venv
+```
+
+Activate the environment on Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Configure secrets
+
+Create:
+
+```text
+.streamlit/secrets.toml
+```
+
+Add the required credentials and environment variables.
+
+Example:
+
+```toml
+MEMBER_PASSWORD = "your-password"
+```
+
+Google Service Account credentials should also be configured securely through Streamlit Secrets.
+
+> Never commit `secrets.toml`, API credentials, passwords, or private Google Sheets URLs to GitHub.
+
+### 5. Run the dashboard
+
+```bash
+streamlit run app.py
+```
+
+The application will then be available through the local Streamlit server.
+
+---
+
+## 🔄 Data Pipeline
+
+The simplified data flow of the application is:
+
+```text
+Google Sheets
+      ↓
+Data Extraction
+      ↓
+Data Preparation
+      ↓
+Metric Calculation
+      ↓
+Interactive Visualization
+      ↓
+Streamlit Dashboard
+```
+
+This structure separates data extraction, transformation, analytics, and visualization to keep the application modular and maintainable.
+
+---
+
+## 🎯 Project Objectives
+
+This project was developed to:
+
+- Centralize Business Development partnership monitoring
+- Reduce manual spreadsheet monitoring
+- Provide clearer visibility into partnership performance
+- Improve document tracking
+- Support data-driven decision-making
+- Apply data analytics and visualization to a real organizational use case
+
+---
+
+## 🌐 Live Demo
+
+The deployed dashboard can be explored here:
+
+**https://bit.ly/BD2627_Dashboard**
+
+The public version uses dummy data for demonstration purposes.
+
+---
+
+## ⚠️ Disclaimer
+
+This repository is intended for portfolio and educational purposes.
+
+All confidential organizational data, private documents, credentials, and sensitive partnership information have been excluded from the public repository. Any publicly accessible demonstration data is dummy or sanitized data and does not represent confidential partnership information.
