@@ -59,18 +59,18 @@ from .metrics import EXPIRY_CATEGORIES
 # Palet BIRU satu keluarga, sesuai permintaan tim BD. Dibedakan lewat
 # kegelapan (bukan warna berbeda), jadi urutannya tetap terbaca oleh
 # pengguna dengan buta warna â€” dan setiap elemen tetap diberi label teks.
-NAVY = "#16357E"
-INDIGO_DEEP = "#3B4BD8"
-PRIMARY = "#5B6BF7"
-PERIWINKLE = "#8492FB"
-SKY = "#2E9BF0"
-SKY_SOFT = "#7FC2F7"
-PALE_BLUE = "#B9CEFC"
-STEEL = "#8FA0C4"
+NAVY = "#3669CD"
+INDIGO_DEEP = "#556BE7"
+PRIMARY = "#528EFF"
+PERIWINKLE = "#A187FF"
+SKY = "#39B8F2"
+SKY_SOFT = "#7DCBFF"
+PALE_BLUE = "#B0DCFF"
+STEEL = "#7289B3"
 
 PRIMARY_DEEP = INDIGO_DEEP
 PRIMARY_SOFT = PERIWINKLE
-PRIMARY_FILL = "rgba(91, 107, 247, 0.16)"
+PRIMARY_FILL = "rgba(82, 142, 255, 0.18)"
 
 # Biru AIESEC tetap disimpan sebagai warna merek.
 AIESEC_BLUE = "#037EF3"
@@ -90,11 +90,11 @@ PALETTE: tuple[str, ...] = (
 
 COLOR_FINANCIAL = PRIMARY
 COLOR_INKIND = SKY
-COLOR_POSITIVE = "#1F7AE0"
-COLOR_MUTED = "#DDE3F1"
-COLOR_TEXT = "#1B2559"
-COLOR_SUBTEXT = "#8A94AD"
-COLOR_GRID = "#EEF1F8"
+COLOR_POSITIVE = "#33B690"
+COLOR_MUTED = "#324462"
+COLOR_TEXT = "#E7EFFF"
+COLOR_SUBTEXT = "#9EAFD0"
+COLOR_GRID = "#243856"
 
 # Kategori expiry: makin mendesak makin gelap. Label teksnya selalu ikut,
 # jadi kegelapan warna hanya penguat, bukan satu-satunya penanda.
@@ -147,7 +147,7 @@ def _style(
         top_margin += 22
 
     fig.update_layout(
-        template="plotly_white",
+        template="plotly_dark",
         font={"family": FONT_FAMILY, "size": BASE_FONT_SIZE, "color": COLOR_TEXT},
         margin={"l": 8, "r": 12, "t": top_margin, "b": 8},
         paper_bgcolor="rgba(0,0,0,0)",
@@ -829,11 +829,20 @@ def document_tracker_heatmap(
     if df_tracker is None or df_tracker.empty:
         return _empty_figure(title)
 
-    columns = tuple(f"has_{document}" for document in document_fields)
+    columns = tuple(
+        "invoice_satisfied" if document == "invoice" and "invoice_satisfied" in df_tracker.columns
+        else f"has_{document}" for document in document_fields
+    )
     _require_columns(df_tracker, ("partner_name",) + columns, "df document tracker")
 
     matrix = df_tracker[list(columns)].astype(int).to_numpy()
-    text = [["v" if cell else "-" for cell in row] for row in matrix]
+    text = [[
+        "N/A" if document_fields[index] == "invoice" and cell
+        and "invoice_exception" in df_tracker.columns
+        and pd.notna(df_tracker.iloc[row_index]["invoice_exception"])
+        else "v" if cell else "-"
+        for index, cell in enumerate(row)
+    ] for row_index, row in enumerate(matrix)]
 
     fig = go.Figure(
         go.Heatmap(

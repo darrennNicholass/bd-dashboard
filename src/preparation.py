@@ -142,6 +142,52 @@ def normalize_header(value: str) -> str:
     return clean_text(value).lower()
 
 
+def normalize_partner_function(value) -> str | None:
+    """Normalize only recognized function labels; never guess from other text."""
+    token = re.sub(r"[\W_]+", "", clean_text(value).casefold())
+    return {"eld": "ELDs", "elds": "ELDs", "ewa": "EwAs", "ewas": "EwAs", "ss": "SS"}.get(token)
+
+
+def attach_partner_functions(df_partner: pd.DataFrame, df_mr: pd.DataFrame) -> pd.DataFrame:
+    """Resolve ESSM ownership before period filtering or partner deduplication.
+
+    National_1.1 currently has no function column. The existing MR source_tab
+    contains the team label. Only an exact normalized-name match with one
+    distinct category is usable; partners researched by multiple teams remain
+    unresolved. An explicit function column, when present, takes precedence.
+    """
+    result = df_partner.copy()
+    if result.empty:
+        return result
+    direct: dict[str, set[str]] = {}
+    provenance: dict[str, set[str]] = {}
+    for row in result.to_dict("records"):
+        key = normalize_partner_name(row["partner_name"])
+        raw_values = row.get("function_candidates")
+        values = raw_values if isinstance(raw_values, (list, tuple, set)) else [row.get("function")]
+        direct.setdefault(key, set()).update(
+            function for value in values
+            if (function := normalize_partner_function(value))
+        )
+    source_functions = {
+        title: normalize_partner_function(title.split("]", 1)[0].lstrip("["))
+        for title in sheets.ACTIVE_MR_WORKSHEETS
+    }
+    if df_mr is not None and not df_mr.empty:
+        for row in df_mr.to_dict("records"):
+            function = source_functions.get(row.get("source_tab"))
+            if function:
+                provenance.setdefault(normalize_partner_name(row["partner_name"]), set()).add(function)
+    resolved = {}
+    for key in direct:
+        candidates = direct[key] or provenance.get(key, set())
+        resolved[key] = next(iter(candidates)) if len(candidates) == 1 else None
+    result["function"] = result["partner_name"].map(
+        lambda name: resolved.get(normalize_partner_name(name))
+    )
+    return result.drop(columns=["function_candidates"], errors="ignore")
+
+
 def is_record_number(value: str) -> bool:
     """True kalau sel kolom NO berisi angka urut murni, mis. '1', '27'."""
     return bool(re.fullmatch(r"\d+", clean_text(value)))
@@ -575,6 +621,12 @@ def extract_partner_records(grid: list[list[str]]) -> list[dict]:
     nama partner terisi. Bulan diambil dari penanda section di atasnya.
     """
     columns = resolve_partner_columns(grid)
+    positions = _label_positions(grid)
+    # Optional explicit ownership fields; stakeholder/notes are not categories.
+    function_columns = {
+        index for label in ("function", "function/category", "function / category", "fungsi", "category")
+        for index in positions.get(label, [])
+    }
 
     records: list[dict] = []
     current_month: str | None = None
@@ -593,6 +645,7 @@ def extract_partner_records(grid: list[list[str]]) -> list[dict]:
 
         record: dict = {
             "partner_name": clean_text(partner_value),
+            "function_candidates": [cell(grid, row_index, index) for index in sorted(function_columns)],
             "stakeholder": clean_text(cell(grid, row_index, columns["stakeholder"])),
             "sales_status": clean_text(cell(grid, row_index, columns["sales_status"])),
             "status_source": clean_text(cell(grid, row_index, columns["status_source"])),

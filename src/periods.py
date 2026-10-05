@@ -19,18 +19,17 @@ ATURAN FILTER PERIODE
        Total MR, Financial Revenue, In-Kind Value, partner baru.
    Metrik ini additif: jumlah tiap bulan = total seluruh periode.
 
-4. METRIK POSISI tidak disaring per baris, melainkan dihitung ulang
-   memakai TANGGAL ACUAN akhir periode:
-       Active Partners, Document Tracker, Expiry Tracker.
+4. METRIK POSISI tidak disaring per baris. Expiry Tracker memakai tanggal
+   acuan akhir periode. Active Partners dan Document Tracker memakai gabungan
+   snapshot aktif bulanan dalam periode yang dipilih, dideduplikasi partner.
    Alasan: "aktif" itu keadaan pada satu titik waktu, bukan kejadian yang
    bisa dijumlahkan. Kalau df_partner ikut disaring per bulan, KPI-nya
    berubah arti menjadi "partner yang DIDAFTARKAN bulan itu dan aktif" —
    angka yang tidak pernah diminta tim BD.
 
-5. Tanggal acuan = akhir bulan terakhir yang dipilih, tapi TIDAK PERNAH
-   melewati hari ini. Jadi memilih seluruh periode tetap menghasilkan
-   "aktif per hari ini" (16 partner, sesuai validasi Phase 5), bukan
-   proyeksi akhir Januari.
+5. Tanggal acuan snapshot bulanan = akhir bulan, tapi TIDAK PERNAH melewati
+   hari ini. Memilih seluruh periode menghasilkan union partner yang aktif
+   pada sedikitnya satu bulan, bukan hanya snapshot aktif hari ini.
 
 6. Conversion rate tetap DIAMBIL dari sheet:
        seluruh periode      -> scope 'all'
@@ -312,6 +311,7 @@ class PeriodFrames:
     conversion_scope: str | None
     df_mr: pd.DataFrame
     df_partner: pd.DataFrame
+    df_partner_active: pd.DataFrame
     df_partner_new: pd.DataFrame
     df_conversion: pd.DataFrame
     df_financial: pd.DataFrame
@@ -356,6 +356,7 @@ def apply_period(
         else partner
     )
     partner_new = filter_by_months(partner_as_of, months)
+    partner_active = active_partner_scope(partner, months, today=today)
 
     if scope is None:
         notes.append(
@@ -380,9 +381,41 @@ def apply_period(
         conversion_scope=scope,
         df_mr=filtered_mr,
         df_partner=partner_as_of,
+        df_partner_active=partner_active,
         df_partner_new=partner_new,
         df_conversion=df_conversion if df_conversion is not None else empty,
         df_financial=filtered_financial,
         df_inkind=filtered_inkind,
         notes=notes,
     )
+
+
+def active_partner_scope(
+    df_partner: pd.DataFrame,
+    selection: str | tuple | list | None = None,
+    *,
+    today: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Union the active partner snapshots for selected months.
+
+    Each snapshot retains the existing LoA + unexpired contract definition.
+    Full term is a deduplicated union, rather than a snapshot at today's date.
+    The National mirror has no separate partner ID, so normalized name is the
+    same identity used by the existing post-partnership deduplication logic.
+    """
+    if df_partner is None or df_partner.empty:
+        return df_partner if df_partner is not None else pd.DataFrame()
+    from . import metrics
+
+    snapshots = []
+    for month in normalize_months(selection):
+        reference = period_reference_date(month, today=today)
+        snapshot = preparation.apply_reference_date(df_partner, reference)
+        active = metrics.get_active_partners(snapshot)
+        if not active.empty:
+            snapshots.append(active)
+    if not snapshots:
+        return df_partner.iloc[0:0].copy()
+    combined = pd.concat(snapshots, ignore_index=True)
+    combined = metrics.deduplicate_partners(combined)
+    return combined.reset_index(drop=True)

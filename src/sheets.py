@@ -28,7 +28,6 @@ import os
 
 import gspread
 import streamlit as st
-from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 
 # ---------------------------------------------------------------------------
@@ -84,7 +83,30 @@ def load_environment() -> None:
     override=False supaya environment variable yang sudah di-set di sistem
     (misalnya nanti di Streamlit Cloud) tidak tertimpa oleh file .env lokal.
     """
-    load_dotenv(dotenv_path=ENV_PATH, override=False)
+    # Read only the two simple values owned by this module.  The same .env may
+    # contain pretty-printed multiline GOOGLE_SERVICE_ACCOUNT JSON for the S&D
+    # tracker; asking a generic dotenv parser to consume that block emits parse
+    # warnings and can truncate the credential to just "{".
+    if not ENV_PATH.is_file():
+        return
+    try:
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    wanted = {ENV_ACTIVE_ESSM, ENV_NATIONAL_SOURCE}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        name = name.strip()
+        if name not in wanted or os.getenv(name):
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if value:
+            os.environ[name] = value
 
 
 def env_status() -> dict[str, bool]:

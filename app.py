@@ -13,15 +13,13 @@ File ini HANYA mengatur tata letak, gaya, dan interaksi. Tidak ada aturan
 bisnis baru di sini: kalau sebuah angka perlu dihitung, tempatnya di
 metrics.py.
 
-ARAH DESAIN (referensi tim BD)
-    SaaS dashboard soft-indigo: latar lavender lembut, kartu putih membulat
-    dengan bayangan halus, satu kartu gelap bergradien sebagai penarik mata,
-    kartu statistik kecil bersparkline, dan tipografi geometris dua keluarga
-    font (Plus Jakarta Sans untuk judul/angka, Inter untuk teks).
+ARAH DESAIN
+    Dashboard dark-navy dengan lapisan gradien biru, panel transparan,
+    batas blue-gray, dan aksen biru/cyan yang terfokus.
 
 CATATAN KEAMANAN
-    Dashboard ini tidak punya autentikasi. Isinya nama partner dan nilai
-    kontrak, jadi jangan diekspos ke internet tanpa proteksi akses
+    Data partner asli hanya untuk Member Login. Tampilan Anonymous memakai
+    masking dan tab S&D tidak memuat konfigurasi atau bukti asli.
     (login Streamlit Cloud / SSO / reverse proxy). Lihat Phase 13.
 
 Cara menjalankan:
@@ -36,7 +34,11 @@ import textwrap
 import pandas as pd
 import streamlit as st
 
-from src import charts, metrics, periods, preparation, sheets
+from src import charts, metrics, periods, preparation, sheets, snd_tracker
+from src.google_drive_service import DriveServiceError
+from src.snd_matching import requirement_signature
+from src.snd_security import may_access_real_snd
+from src.snd_store import SNDStoreError, get_store, partner_key
 
 st.set_page_config(
     page_title="BD Analytics — AIESEC in BINUS",
@@ -118,6 +120,39 @@ ICON_FONT_CSS = """
 # =========================================================
 # ACCESS CONTROL
 # =========================================================
+
+ENTRY_DARK_STYLE = """
+<style>
+  .stApp {
+    background: radial-gradient(ellipse 65% 50% at 50% 7%, rgba(40,102,202,.26), transparent 75%),
+                linear-gradient(145deg, #09172b, #07111f 72%) !important;
+    color: #e7efff !important;
+  }
+  .landing-badge { background: #1b3556 !important; color: #a7caff !important;
+                   border-color: #3c628f !important; }
+  .access-card, div[class*="st-key-login_card"] {
+    background: linear-gradient(145deg, #192e4b, #112139) !important;
+    border: 1px solid #315174 !important;
+    box-shadow: 0 20px 45px rgba(1,8,25,.35) !important;
+  }
+  .access-card h3, .login-title, .stApp h1 { color: #edf4ff !important; }
+  .access-card p, .login-sub, .login-foot { color: #b5c6df !important; }
+  .access-icon, .login-mark { background: #254c7f !important; color: #dcecff !important; }
+  .login-eyebrow, .login-field-label { color: #8fbcff !important; }
+  [data-testid="stButton"] > button {
+    background: #1e3a60 !important; color: #d5e7ff !important;
+    border-color: #3c6190 !important;
+  }
+  [data-testid="stButton"] > button:hover { background: #285992 !important; color: #fff !important; }
+  div[class*="st-key-login_submit"] button {
+    background: linear-gradient(110deg, #2464c5, #3988ed) !important;
+    color: #fff !important;
+  }
+  div[class*="st-key-login_card"] [data-testid="stTextInputRootElement"] {
+    background: #142740 !important; border-color: #37577c !important;
+  }
+</style>
+"""
 
 if "access_mode" not in st.session_state:
     st.session_state.access_mode = None
@@ -241,6 +276,8 @@ if st.session_state.access_mode is None:
     # ==========================
     # HEADER
     # ==========================
+
+    st.markdown(ENTRY_DARK_STYLE, unsafe_allow_html=True)
 
     st.markdown(
         '<p style="text-align:center; margin:0 0 20px 0;">'
@@ -520,6 +557,8 @@ if st.session_state.access_mode == "login":
         """,
         unsafe_allow_html=True,
     )
+
+    st.markdown(ENTRY_DARK_STYLE, unsafe_allow_html=True)
 
     def _member_password() -> str | None:
         """Ambil MEMBER_PASSWORD dari Streamlit Secrets.
@@ -1032,6 +1071,107 @@ STYLE = """
 """
 st.markdown(STYLE, unsafe_allow_html=True)
 
+# Dark navy theme overrides the existing component hooks, preserving layout
+# and widget behavior while giving all dashboard sections one visual system.
+DARK_STYLE = """
+<style>
+  .stApp {
+    color: #e7efff;
+    background:
+      radial-gradient(ellipse 58% 32% at 53% -4%, rgba(43,111,225,.23), transparent 72%),
+      radial-gradient(ellipse 35% 30% at 100% 44%, rgba(17,94,173,.12), transparent 75%),
+      linear-gradient(155deg, #0a1629 0%, #081221 46%, #07111e 100%) !important;
+  }
+  .block-container { max-width: 1500px; padding-top: 2.25rem; }
+  [data-testid="stVerticalBlockBorderWrapper"],
+  div[class*="st-key-bdcard"] {
+    background: linear-gradient(145deg, rgba(20,37,62,.96), rgba(13,26,46,.96)) !important;
+    border: 1px solid #2b4263 !important;
+    box-shadow: 0 12px 28px rgba(0,4,15,.22), inset 0 1px rgba(119,169,255,.035) !important;
+    border-radius: 18px !important;
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  div[class*="st-key-bdcard"]:hover {
+    border-color: #42658d !important;
+    box-shadow: 0 14px 30px rgba(0,7,25,.32), 0 0 18px rgba(52,119,255,.06) !important;
+  }
+  [data-testid="stMetric"] {
+    background: linear-gradient(150deg, #172a46, #101d32 72%) !important;
+    border: 1px solid #2b4263 !important;
+    box-shadow: 0 10px 25px rgba(0,5,18,.24) !important;
+    border-radius: 17px !important;
+  }
+  [data-testid="stMetricValue"] { color: #f0f6ff !important; }
+  [data-testid="stMetricLabel"] p, [data-testid="stMetricDelta"] { color: #9eafd0 !important; }
+  .bd-title, .bd-card-title, .bd-section-title, .bd-brand,
+  .bd-row-name, .bd-track-name, .bd-exp-name, .bd-access-name { color: #edf4ff !important; }
+  .bd-subtitle, .bd-card-sub, .bd-section-sub, .bd-row-meta,
+  .bd-track-meta, .bd-access-note, .bd-brand-sub, .bd-exp-pic,
+  .bd-exp-label, .bd-empty-note { color: #9eafd0 !important; }
+  .bd-side-group-title { color: #74a9ff !important; }
+  .bd-side-group-line { background: linear-gradient(90deg, #335b91, transparent) !important; }
+  .bd-row:hover { background: #1a3150 !important; }
+  .bd-row-tag, .bd-pill-info {
+    color: #a8c7ff !important; background: #213b65 !important; border-color: #35578a !important;
+  }
+  .bd-pill-muted { color: #a7b7d3 !important; background: #1b2b44 !important; border-color: #31445f !important; }
+  .bd-pill-ok, .bd-badge-done { color: #7de0bb !important; background: #12382f !important; border-color: #286a54 !important; }
+  .bd-pill-alert, .bd-badge-missing { color: #ffc17d !important; background: #3b2b21 !important; border-color: #765333 !important; }
+  .bd-badge-wait, .bd-badge-none { color: #b4c2d9 !important; background: #1b2b44 !important; border-color: #31445f !important; }
+  .bd-track-row, .bd-exp-card, .bd-empty {
+    background: linear-gradient(125deg, #172a45, #112038) !important;
+    border-color: #2b4263 !important;
+  }
+  .bd-track-row-full, .bd-exp-critical { background: linear-gradient(120deg, #1c3b61, #12243d) !important; }
+  .bd-track-head span, .bd-track-date, .bd-empty-title { color: #d5e4ff !important; }
+  .bd-exp-date, .bd-exp-days-normal { color: #b7cbed !important; }
+  section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, rgba(16,31,52,.98), rgba(9,21,38,.98)) !important;
+    border-right: 1px solid #294366 !important;
+    box-shadow: 12px 0 35px rgba(2,8,22,.22);
+  }
+  section[data-testid="stSidebar"] div[class*="st-key-side_"] {
+    background: rgba(27,48,78,.65) !important;
+    border: 1px solid #315071 !important;
+  }
+  section[data-testid="stSidebar"] label p { color: #b3c4df !important; }
+  section[data-testid="stSidebar"] [data-testid="stButton"] > button {
+    color: #c4dcff !important; background: #203858 !important; border-color: #3b5d86 !important;
+  }
+  section[data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
+    color: #fff !important; background: #2b5182 !important; border-color: #6da4ed !important;
+  }
+  [data-testid="stTabs"] > div:first-child { border-bottom-color: #294260 !important; }
+  [data-testid="stTab"][aria-selected="true"], button[data-baseweb="tab"][aria-selected="true"] {
+    background: linear-gradient(120deg, #1c4a89, #286cc3) !important;
+    border-radius: 11px 11px 0 0; color: white !important;
+  }
+  [data-testid="stTab"]:hover { background: #1b3455; }
+  [data-testid="stExpander"] { border-color: #2e496a !important; border-radius: 14px !important; }
+  [data-testid="stButton"] > button[kind="primary"] {
+    background: linear-gradient(110deg, #2464c5, #3588ed) !important;
+    border-color: #5a9dec !important; color: white !important;
+    box-shadow: 0 7px 21px rgba(29,104,218,.24);
+  }
+  [data-testid="stButton"] > button[kind="primary"]:hover {
+    background: linear-gradient(110deg, #3278dd, #4b9cff) !important;
+  }
+  [data-testid="stButton"] > button:disabled {
+    opacity: .43 !important; box-shadow: none !important; cursor: not-allowed !important;
+  }
+  [data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"],
+  [data-testid="stSelectbox"] > div > div {
+    background: #13243d !important; border-color: #355174 !important;
+  }
+  [data-testid="stProgress"] > div > div { background: linear-gradient(90deg, #2f72d9, #53b5ff) !important; }
+  @media (max-width: 900px) {
+    .block-container { padding-left: 1rem; padding-right: 1rem; }
+    .bd-title { font-size: 1.25rem; }
+  }
+</style>
+"""
+st.markdown(DARK_STYLE, unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------------------------
 # Pengambilan data
@@ -1042,11 +1182,13 @@ st.markdown(STYLE, unsafe_allow_html=True)
 def load_frames(reference_date: pd.Timestamp) -> dict[str, pd.DataFrame]:
     """Ambil dan bangun seluruh dataframe. Hasilnya di-cache per tanggal acuan."""
     partner_grid = preparation.load_partner_grid()
+    df_mr = preparation.build_df_mr()
+    df_partner = preparation.attach_partner_functions(
+        preparation.build_df_partner(partner_grid, reference_date=reference_date), df_mr
+    )
     return {
-        "df_mr": preparation.build_df_mr(),
-        "df_partner": preparation.build_df_partner(
-            partner_grid, reference_date=reference_date
-        ),
+        "df_mr": df_mr,
+        "df_partner": df_partner,
         "df_conversion": preparation.build_df_conversion(partner_grid),
         "df_financial": preparation.build_df_financial(
             preparation.load_revenue_grid(sheets.NATIONAL_FINANCIAL_WORKSHEET)
@@ -1473,7 +1615,8 @@ def header(frame: periods.PeriodFrames, loaded_at: pd.Timestamp) -> None:
         st.markdown(
             '<p class="bd-title">Business Development Dashboard</p>'
             f'<p class="bd-subtitle">Periode {html.escape(frame.label)} · '
-            f"metrik posisi dihitung per {frame.reference_date:%d %B %Y}</p>",
+            f"partner aktif: gabungan bulanan · status kontrak per "
+            f"{frame.reference_date:%d %B %Y}</p>",
             unsafe_allow_html=True,
         )
     with right:
@@ -1584,19 +1727,23 @@ def alert_row(data: dict) -> None:
     sejalan dengan panel "Perlu perhatian" di halaman Ringkasan.
     """
     frame, completeness = data["frame"], data["completeness"]
-    active_expiry = metrics.get_expiry_summary(
-        frame.df_partner, reference_date=frame.reference_date, active_only=True
-    )
-    all_expiry = data["expiry_summary"]
+    if data.get("anonymous_demo"):
+        # Never recalculate public alert counts from the unmasked ESSM frame.
+        ending, soon, expired = 2, 3, 4
+    else:
+        active_expiry = metrics.get_expiry_summary(
+            frame.df_partner, reference_date=frame.reference_date, active_only=True
+        )
+        all_expiry = data["expiry_summary"]
+
+        def count(summary: pd.DataFrame, category: str) -> int:
+            row = summary.loc[summary["expiry_category"] == category]
+            return int(row["partner_count"].iloc[0]) if not row.empty else 0
+
+        ending = count(active_expiry, metrics.EXPIRY_THIS_MONTH)
+        soon = count(active_expiry, metrics.EXPIRY_SOON)
+        expired = count(all_expiry, metrics.EXPIRY_EXPIRED)
     items: list[tuple[str, str]] = []
-
-    def count(summary: pd.DataFrame, category: str) -> int:
-        row = summary.loc[summary["expiry_category"] == category]
-        return int(row["partner_count"].iloc[0]) if not row.empty else 0
-
-    ending = count(active_expiry, metrics.EXPIRY_THIS_MONTH)
-    soon = count(active_expiry, metrics.EXPIRY_SOON)
-    expired = count(all_expiry, metrics.EXPIRY_EXPIRED)
     if ending:
         items.append(("alert", f"{ending} kontrak aktif berakhir bulan ini"))
     if soon:
@@ -1764,7 +1911,7 @@ def tab_partner(data: dict) -> None:
             st.info("🔒 Partner details are hidden in public mode.")
 
         else:
-            active = metrics.get_active_partners(data["frame"].df_partner)
+            active = data["frame"].df_partner_active
 
             st.dataframe(
                 active[
@@ -1862,14 +2009,260 @@ def tab_documents(data: dict) -> None:
         charts.document_tracker_heatmap(data["tracker"], title=None, description=""),
         key="dc_tracker",
         title="Document tracker partner aktif",
-        subtitle="v = dokumen ada · urut dari yang paling banyak kosong",
+        subtitle="v = dokumen ada · N/A = Invoice exception · urut dari yang paling banyak kosong",
     )
+
+    if IS_MEMBER and not data["tracker"].empty:
+        with st.expander("Invoice exceptions · per partner"):
+            st.caption(
+                "Select In-Kind or No Membership when an invoice is not required. "
+                "Choose Required to clear an exception."
+            )
+            tracker = data["tracker"]
+            editor = pd.DataFrame({
+                "Partner": tracker["partner_name"],
+                "Invoice": [
+                    "On file" if row.has_invoice else
+                    f"N/A — {row.invoice_exception}" if pd.notna(row.invoice_exception)
+                    else "Missing" for row in tracker.itertuples()
+                ],
+                "Invoice Exception": tracker["invoice_exception"].fillna("Required"),
+                "Document Compliance": tracker["document_compliance_percent"].map(
+                    lambda value: f"{value:.0f}%"
+                ),
+            })
+            revision = st.session_state.get("invoice_editor_revision", 0)
+            updated = st.data_editor(
+                editor, hide_index=True, width="stretch",
+                disabled=["Partner", "Invoice", "Document Compliance"],
+                column_config={
+                    "Invoice Exception": st.column_config.SelectboxColumn(
+                        "Invoice Exception",
+                        options=["Required", "In-Kind", "No Membership"],
+                        required=True,
+                    ),
+                },
+                key=f"invoice_editor_{revision}",
+            )
+            if st.button("Save invoice exceptions", type="primary"):
+                try:
+                    store = get_store()
+                    for before, after in zip(editor.itertuples(), updated.itertuples()):
+                        if before[3] != after[3]:
+                            store.set_invoice_exception(
+                                before[1], None if after[3] == "Required" else after[3]
+                            )
+                except SNDStoreError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state.invoice_editor_revision = revision + 1
+                    st.rerun()
 
     section_partnership_report_survey(data)
     section_completed_partnership(data)
     section_expiring_partners(data)
 
 
+SND_STATUS_MARK = {
+    "COMPLETED": "✓",
+    "PARTIAL": "◐",
+    "MISSING": "✕",
+    "NEEDS_REVIEW": "?",
+}
+
+
+def _snd_editor(rows: list[dict], kind: str, partner_id: str) -> pd.DataFrame:
+    selected = [row for row in rows if row["kind"] == kind]
+    frame = pd.DataFrame(
+        [{
+            "ID": row["id"], "Deliverable": row["name"],
+            "Quantity": row["quantity"],
+        } for row in selected],
+        columns=["ID", "Deliverable", "Quantity"],
+    )
+    if frame.empty:
+        frame = frame.astype({"ID": "str", "Deliverable": "str", "Quantity": "Int64"})
+    st.markdown(f"#### {kind.title()}")
+    st.caption("Use Add row to add a requirement; select a row and delete it to remove one.")
+    revision = st.session_state.get("snd_editor_revision", 0)
+    return st.data_editor(
+        frame, num_rows="dynamic", hide_index=True, width="stretch",
+        column_order=["Deliverable", "Quantity"],
+        column_config={
+            "ID": None,
+            "Deliverable": st.column_config.TextColumn("Deliverable", required=True, width="large"),
+            "Quantity": st.column_config.NumberColumn(
+                "Quantity", min_value=1, step=1, required=True, width="small", format="%d"
+            ),
+        },
+        key=f"snd_{kind}_{partner_id}_{revision}",
+    )
+
+
+def _snd_editor_rows(frame: pd.DataFrame, kind: str) -> list[dict]:
+    rows = []
+    for item in frame.to_dict("records"):
+        name = preparation.clean_text(item.get("Deliverable"))
+        quantity = item.get("Quantity")
+        if not name and (quantity is None or pd.isna(quantity)):
+            continue
+        rows.append({
+            "id": preparation.clean_text(item.get("ID")), "kind": kind, "name": name,
+            "quantity": quantity,
+        })
+    return rows
+
+
+def _snd_check_results(result: dict) -> None:
+    if result.get("partner_match") != "matched":
+        st.warning("Partner Drive folder could not be matched safely. Review the folder name.")
+    for warning in result.get("warnings", []):
+        st.warning(warning)
+    columns = st.columns(3)
+    columns[0].metric("Supply", f"{result['supply_percent']:.0f}%")
+    columns[1].metric("Demand", f"{result['demand_percent']:.0f}%")
+    columns[2].metric("Overall S&D", f"{result['overall_percent']:.0f}%")
+    st.progress(result["overall_percent"] / 100)
+    for kind in ("supply", "demand"):
+        st.markdown(f"#### {kind.title()} fulfillment")
+        for item in result["requirements"]:
+            if item["kind"] != kind:
+                continue
+            mark = SND_STATUS_MARK[item["status"]]
+            with st.container(border=True):
+                st.markdown(
+                    f"{mark} **{html.escape(item['name'])}** · "
+                    f"{item['fulfilled_quantity']}/{item['quantity']} · "
+                    f"{item['status'].replace('_', ' ').title()}"
+                )
+                for proof in item["matched_evidence"]:
+                    st.caption(
+                        f"✓ {proof['name']} · {proof['method']} · "
+                        f"{proof['confidence']:.0%} · credit {proof['credited_quantity']}"
+                    )
+                for proof in item["possible_evidence"]:
+                    st.caption(f"? {proof['name']} · possible match ({proof['confidence']:.0%})")
+    unmatched = result.get("unmatched_evidence", [])
+    if unmatched:
+        with st.container(border=True):
+            st.markdown(f"#### Unmatched Evidence ({len(unmatched)})")
+            for proof in unmatched:
+                st.caption(f"{proof['kind'].title()} · {proof['name']}")
+
+
+def tab_snd_tracker(data: dict) -> None:
+    """ESSM active partners, saved manual requirements, and on-demand proof scan."""
+    section_title(
+        "S&D Fulfillment Tracker",
+        "Set deliverables for active ESSM partners, then check their Drive proof.",
+    )
+    if not may_access_real_snd(st.session_state.get("access_mode")):
+        st.info("S&D requirements and evidence are available to members only.", icon=":material/lock:")
+        return
+
+    active = data["frame"].df_partner_active
+    if active.empty:
+        empty_state("No active partners in this period.")
+        return
+    names = sorted(active["partner_name"].astype(str).unique(), key=str.casefold)
+    try:
+        store = get_store()
+        resolutions = snd_tracker.active_partner_functions(active, store.get_partner_function_assignments())
+        functions = {key: resolution.value for key, resolution in resolutions.items()}
+        counts = store.requirement_counts()
+    except SNDStoreError as exc:
+        st.error(str(exc))
+        return
+    st.metric("Active Partners", len(names))
+
+    search_col, filter_col = st.columns([2, 1])
+    with search_col:
+        search = st.text_input("Search Partner", placeholder="Search active partners").casefold().strip()
+    with filter_col:
+        category = st.selectbox("Function", ["All", "ELDs", "EwAs", "SS", "Unassigned"], key="snd_category")
+
+    shown = [
+        name for name in names
+        if search in name.casefold()
+        and (category == "All" or
+             (category == "Unassigned" and not functions.get(partner_key(name))) or
+             functions.get(partner_key(name)) == category)
+    ]
+    if not shown:
+        empty_state("No partners match the search and function filter.")
+        return
+
+    selected_key = st.session_state.get("snd_selected_partner")
+    for name in shown:
+        key = partner_key(name)
+        function = functions.get(key)
+        requirements_count = counts.get(key, 0)
+        requirements = store.list_requirements(name) if requirements_count else []
+        signature = requirement_signature(requirements, function or "") if requirements else ""
+        previous = store.get_check(name, signature) if signature else None
+        selected = selected_key == key
+        setup = "Configured" if requirements_count else "Not configured"
+        progress = f"{previous['overall_percent']:.0f}%" if previous else "Not checked"
+        with st.expander(
+            f"{name} · {function or 'Unassigned'} · S&D Setup: {setup} · Fulfillment: {progress}",
+            expanded=selected,
+        ):
+            if not selected:
+                if st.button("Manage S&D", key=f"snd_manage_{key}"):
+                    st.session_state.snd_selected_partner = key
+                    st.rerun()
+                continue
+
+            chosen = function
+            if function:
+                st.markdown(f"**Function** · `{function}`")
+                st.caption("Auto-detected from ESSM" if resolutions[key].source == "essm"
+                           else "Saved partner function")
+            else:
+                st.caption("Function/category could not be identified unambiguously from ESSM.")
+                chosen = st.selectbox(
+                    "Function / category", ["ELDs", "EwAs", "SS"], index=None,
+                    placeholder="Select function", key=f"snd_function_{key}",
+                )
+                if not chosen:
+                    st.warning("Select the partner function before saving S&D requirements.")
+            supply = _snd_editor(requirements, "supply", key)
+            demand = _snd_editor(requirements, "demand", key)
+            save_col, check_col = st.columns(2)
+            with save_col:
+                if st.button("Save S&D Requirements", type="primary", key=f"snd_save_{key}",
+                             width="stretch", disabled=not chosen):
+                    try:
+                        saved = snd_tracker.save_partner_requirements(
+                            name, active,
+                            _snd_editor_rows(supply, "supply") + _snd_editor_rows(demand, "demand"),
+                            store=store, manual_function=chosen,
+                        )
+                    except (ValueError, SNDStoreError) as exc:
+                        st.error(str(exc))
+                    else:
+                        st.session_state.snd_editor_revision = st.session_state.get("snd_editor_revision", 0) + 1
+                        st.toast(f"Saved {len(saved)} requirements.")
+                        st.rerun()
+            with check_col:
+                if st.button(
+                    "↻ Check Fulfillment", type="secondary",
+                    disabled=not snd_tracker.can_check_fulfillment(requirements, function),
+                    key=f"snd_check_{key}", width="stretch",
+                ):
+                    try:
+                        with st.spinner("Checking proof filenames in Google Drive..."):
+                            previous = snd_tracker.check_partner_fulfillment(
+                                name, function, store=store
+                            )
+                    except (DriveServiceError, ValueError, SNDStoreError) as exc:
+                        st.error(str(exc))
+                    else:
+                        st.rerun()
+            if previous:
+                _snd_check_results(previous)
+            elif requirements:
+                st.caption("Check Fulfillment to scan the saved requirements against Drive proof filenames.")
 # ---------------------------------------------------------------------------
 # Section baru: post-partnership & masa berakhir
 # ---------------------------------------------------------------------------
@@ -2252,6 +2645,7 @@ def build_view_data(
     df_report: pd.DataFrame | None = None,
     df_survey: pd.DataFrame | None = None,
     post_unavailable: list[str] | None = None,
+    invoice_exceptions: dict[str, str] | None = None,
 ) -> dict:
     """Semua angka & tabel yang dipakai halaman, semuanya lewat metrics.py.
 
@@ -2266,6 +2660,7 @@ def build_view_data(
         frame.df_financial, frame.df_inkind,
         scope=frame.conversion_scope or "",
     )
+    summary["active_partners"] = metrics.get_active_partner_count(frame.df_partner_active)
     expiry_detail = metrics.get_partnership_expiry(
         frame.df_partner, reference_date=frame.reference_date
     )
@@ -2292,8 +2687,12 @@ def build_view_data(
         "inkind_monthly": metrics.get_revenue_by_month(frame.df_inkind, "inkind_value"),
         "financial_partner": metrics.get_revenue_by_partner(frame.df_financial, "revenue"),
         "inkind_partner": metrics.get_revenue_by_partner(frame.df_inkind, "inkind_value"),
-        "completeness": metrics.get_document_completeness(frame.df_partner),
-        "tracker": metrics.get_document_tracker(frame.df_partner),
+        "completeness": metrics.get_document_completeness(
+            frame.df_partner_active, invoice_exceptions
+        ),
+        "tracker": metrics.get_document_tracker(
+            frame.df_partner_active, invoice_exceptions
+        ),
         "expiry_summary": metrics.get_expiry_summary(
             frame.df_partner, reference_date=frame.reference_date
         ),
@@ -2324,6 +2723,7 @@ def mask_anonymous_data(data: dict) -> dict:
     import copy
 
     masked = copy.deepcopy(data)
+    masked["anonymous_demo"] = True
 
     # =====================================================
     # HELPER
@@ -2577,17 +2977,36 @@ def mask_anonymous_data(data: dict) -> dict:
     # DOCUMENT TRACKER
     # =====================================================
 
-    tracker = masked.get("tracker")
-
-    if tracker is not None and not tracker.empty:
-
-        tracker = anonymize_names(
-            tracker,
-            "partner_name",
-            "Partner"
-        )
-
-        masked["tracker"] = tracker
+    # Fixed demo rows: neither status nor partner count comes from ESSM.
+    demo_tracker = pd.DataFrame([
+        {
+            "partner_name": f"Partner {index + 1:02d}",
+            "stakeholder": "Hidden",
+            "has_proposal": index % 4 != 0,
+            "has_mom": index % 3 != 0,
+            "has_loa": index % 5 != 0,
+            "has_invoice": index % 2 == 0,
+            "invoice_exception": None,
+            "invoice_satisfied": index % 2 == 0,
+        }
+        for index in range(8)
+    ])
+    document_cols = ["has_proposal", "has_mom", "has_loa", "invoice_satisfied"]
+    demo_tracker["documents_missing"] = 4 - demo_tracker[document_cols].sum(axis=1)
+    demo_tracker["documents_complete"] = demo_tracker["documents_missing"].eq(0)
+    demo_tracker["document_compliance_percent"] = (
+        demo_tracker[document_cols].sum(axis=1) / 4 * 100
+    )
+    masked["tracker"] = demo_tracker
+    masked["completeness"] = pd.DataFrame([
+        {
+            "document": document,
+            "available": int(demo_tracker[column].sum()),
+            "missing": 8 - int(demo_tracker[column].sum()),
+            "available_percent": round(float(demo_tracker[column].mean()) * 100, 2),
+        }
+        for document, column in zip(metrics.DOCUMENT_FIELDS, document_cols)
+    ])
 
     # =====================================================
     # EXPIRY DETAIL
@@ -2633,28 +3052,6 @@ def mask_anonymous_data(data: dict) -> dict:
             )
 
         masked["expiry_summary"] = expiry_summary
-
-    # =====================================================
-    # DOCUMENT COMPLETENESS
-    # =====================================================
-
-    completeness = masked.get("completeness")
-
-    if completeness is not None and not completeness.empty:
-
-        completeness = completeness.copy()
-
-        numeric_columns = completeness.select_dtypes(
-            include="number"
-        ).columns
-
-        for column in numeric_columns:
-            completeness[column] = demo_values(
-                len(completeness),
-                start=4
-            )
-
-        masked["completeness"] = completeness
 
     # =====================================================
     # POST-PARTNERSHIP (Report & Survey)
@@ -2751,6 +3148,84 @@ def mask_anonymous_data(data: dict) -> dict:
 
         masked["post_completeness"] = post_completeness
 
+    # Use fixed public demo rows rather than source-shaped partner lists.
+    for key in ["financial_partner", "inkind_partner"]:
+        masked[key] = pd.DataFrame([
+            {"partner_name": f"Partner {index + 1:02d}",
+             "records": index + 1, "amount": (8 - index) * 500_000}
+            for index in range(6)
+        ])
+    masked["stakeholder"] = pd.DataFrame([
+        {"stakeholder": f"Category {index + 1}",
+         "partner_count": value, "share_percent": round(value / 30 * 100, 2)}
+        for index, value in enumerate([12, 8, 6, 4])
+    ])
+    masked["watchlist"] = [
+        {"name": f"Partner {index:02d}", "meta": "Demo partnership · details hidden",
+         "tag": "Demo", "color": charts.PRIMARY}
+        for index in range(1, 5)
+    ]
+    demo_month = pd.Timestamp.today().normalize().replace(day=1)
+    masked["expiry_detail"] = pd.DataFrame([
+        {
+            "partner_name": f"Partner {index + 1:02d}",
+            "end_month": demo_month + pd.DateOffset(months=index % 6),
+            "expiry_category": (metrics.EXPIRY_THIS_MONTH if index == 0
+                                else metrics.EXPIRY_SOON if index < 4
+                                else metrics.EXPIRY_LATER),
+            "is_active": True,
+        }
+        for index in range(8)
+    ])
+    demo_post_status = [
+        metrics.POST_STATUS_COMPLETED, metrics.POST_STATUS_MISSING,
+        metrics.POST_STATUS_NOT_REQUIRED, metrics.POST_STATUS_NO_END_DATE,
+    ]
+    masked["post_status"] = pd.DataFrame([
+        {
+            "partner_name": f"Partner {index + 1:02d}",
+            "stakeholder": "Hidden", "end_month_raw": "Hidden",
+            "end_date": pd.NaT, "is_due": index % 4 < 2,
+            "is_final_month": False,
+            "survey_status": demo_post_status[index % 4],
+            "report_status": demo_post_status[(index + 1) % 4],
+            "survey_submitted_early": False, "report_submitted_early": False,
+            "survey_source_name": "Hidden", "report_source_name": "Hidden",
+        }
+        for index in range(8)
+    ])
+    masked["post_tracker"] = pd.DataFrame([
+        {
+            "partner_name": f"Partner {index + 1:02d}",
+            "stakeholder": "Hidden", "end_month_raw": "Hidden",
+            "end_date": pd.NaT, "days_since_end": 30,
+            "is_final_month": False,
+            "survey_status": (metrics.POST_STATUS_COMPLETED if index % 2 == 0
+                              else metrics.POST_STATUS_MISSING),
+            "report_status": (metrics.POST_STATUS_COMPLETED if index % 3 == 0
+                              else metrics.POST_STATUS_MISSING),
+            "survey_source_name": "Hidden", "report_source_name": "Hidden",
+            "report_recorded": False,
+            "is_fully_completed": index % 6 == 0,
+        }
+        for index in range(6)
+    ])
+    masked["post_summary"] = metrics.get_post_partnership_summary(masked["post_tracker"])
+    masked["post_completeness"] = metrics.get_post_partnership_completeness(masked["post_tracker"])
+    masked["expiring"] = pd.DataFrame([
+        {
+            "partner_name": f"Partner {index + 1:02d}",
+            "stakeholder": "Demo partnership · details hidden",
+            "pic_aiesec": None, "end_date": pd.NaT,
+            "end_month_raw": "Hidden", "days_remaining": day,
+            "months_remaining": 1,
+            "urgency": (metrics.URGENCY_CRITICAL if day <= 7
+                        else metrics.URGENCY_WARNING if day <= 30
+                        else metrics.URGENCY_NORMAL),
+        }
+        for index, day in enumerate([5, 20, 60])
+    ])
+
     return masked
 
 # ---------------------------------------------------------------------------
@@ -2781,12 +3256,18 @@ def main() -> None:
     post_frames = load_post_partnership_frames()
 
     frame = periods.apply_period(selection, today=today, **frames)
+    try:
+        invoice_exceptions = get_store().get_invoice_exceptions() if IS_MEMBER else {}
+    except SNDStoreError as exc:
+        st.warning(str(exc))
+        invoice_exceptions = {}
     data = build_view_data(
         frame,
         today,
         df_report=post_frames["df_report"],
         df_survey=post_frames["df_survey"],
         post_unavailable=post_frames["unavailable"],
+        invoice_exceptions=invoice_exceptions,
     )
     # Anonymous tidak menerima data asli untuk visualisasi
     if not IS_MEMBER:
@@ -2796,9 +3277,9 @@ def main() -> None:
     kpi_row(data)
     alert_row(data)
 
-    overview, market, partner, revenue, documents = st.tabs(
+    overview, market, partner, revenue, documents, snd = st.tabs(
         ["Ringkasan", "Market Research", "Partner & Funnel", "Revenue",
-         "Dokumen & Kontrak"]
+         "Dokumen & Kontrak", "S&D Tracker"]
     )
     with overview:
         tab_overview(data)
@@ -2810,6 +3291,8 @@ def main() -> None:
         tab_revenue(data)
     with documents:
         tab_documents(data)
+    with snd:
+        tab_snd_tracker(data)
 
 
 if __name__ == "__main__":

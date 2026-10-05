@@ -24,6 +24,9 @@ phase*.txt
 phase*.html
 *_output.txt
 data/raw/
+.cache/
+.local/
+tests/.tmp_*
 
 # Screenshot & pratinjau tampilan memuat nama partner & nilai kontrak.
 shot_*

@@ -461,7 +461,9 @@ def get_stakeholder_distribution(
 # ---------------------------------------------------------------------------
 
 
-def get_document_tracker(df_partner: pd.DataFrame) -> pd.DataFrame:
+def get_document_tracker(
+    df_partner: pd.DataFrame, invoice_exceptions: dict[str, str] | None = None
+) -> pd.DataFrame:
     """Kelengkapan dokumen per partner AKTIF.
 
     Returns:
@@ -472,7 +474,8 @@ def get_document_tracker(df_partner: pd.DataFrame) -> pd.DataFrame:
     columns = (
         ["partner_name", "stakeholder"]
         + document_columns
-        + ["documents_complete", "documents_missing"]
+        + ["invoice_exception", "invoice_satisfied", "documents_complete",
+           "documents_missing", "document_compliance_percent"]
     )
     if _empty(df_partner):
         return pd.DataFrame(columns=columns)
@@ -487,17 +490,30 @@ def get_document_tracker(df_partner: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=columns)
 
     tracker = active[["partner_name", "stakeholder"] + document_columns].copy()
-    tracker["documents_complete"] = tracker[document_columns].all(axis=1)
+    exceptions = invoice_exceptions or {}
+    tracker["invoice_exception"] = tracker["partner_name"].map(
+        lambda name: exceptions.get(normalize_partner_name(name))
+    )
+    tracker["invoice_satisfied"] = (
+        tracker["has_invoice"] | tracker["invoice_exception"].notna()
+    )
+    satisfied = ["has_proposal", "has_mom", "has_loa", "invoice_satisfied"]
+    tracker["documents_complete"] = tracker[satisfied].all(axis=1)
     tracker["documents_missing"] = (
-        len(document_columns) - tracker[document_columns].sum(axis=1)
+        len(satisfied) - tracker[satisfied].sum(axis=1)
     ).astype(int)
+    tracker["document_compliance_percent"] = (
+        tracker[satisfied].sum(axis=1) / len(satisfied) * 100
+    ).round(2)
     # Yang dokumennya paling banyak bolong ditaruh di atas: itu yang perlu ditagih.
     return tracker.sort_values(
         ["documents_missing", "partner_name"], ascending=[False, True]
     ).reset_index(drop=True)
 
 
-def get_document_completeness(df_partner: pd.DataFrame) -> pd.DataFrame:
+def get_document_completeness(
+    df_partner: pd.DataFrame, invoice_exceptions: dict[str, str] | None = None
+) -> pd.DataFrame:
     """Rekap per jenis dokumen untuk partner aktif.
 
     Returns:
@@ -511,10 +527,12 @@ def get_document_completeness(df_partner: pd.DataFrame) -> pd.DataFrame:
     if active.empty:
         return pd.DataFrame(columns=columns)
 
-    total = len(active)
+    tracker = get_document_tracker(df_partner, invoice_exceptions)
+    total = len(tracker)
     rows = []
     for document in DOCUMENT_FIELDS:
-        available = int(active[f"has_{document}"].sum())
+        column = "invoice_satisfied" if document == "invoice" else f"has_{document}"
+        available = int(tracker[column].sum())
         rows.append(
             {
                 "document": document,

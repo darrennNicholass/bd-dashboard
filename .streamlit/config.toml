@@ -5,14 +5,14 @@
 # lavender lembut, kartu putih membulat, aksen indigo, tipografi geometris.
 
 [theme]
-base = "light"
+base = "dark"
 
 # Indigo sebagai warna aksi, biru AIESEC tetap dipakai di grafik sebagai
 # warna merek.
-primaryColor = "#5B6BF7"
-backgroundColor = "#F4F6FC"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1B2559"
+primaryColor = "#528EFF"
+backgroundColor = "#081222"
+secondaryBackgroundColor = "#101D32"
+textColor = "#E7EFFF"
 
 # Tipografi: Plus Jakarta Sans (geometris, untuk judul & angka) dipadu
 # Inter (badan teks). Dua keluarga font supaya hierarkinya tidak monoton.
@@ -22,7 +22,7 @@ baseFontSize = 15
 
 # Sudut membulat dan tanpa garis tegas pada widget, mengikuti referensi.
 baseRadius = "1rem"
-borderColor = "#E9ECF6"
+borderColor = "#2D4263"
 showWidgetBorder = false
 
 [server]
