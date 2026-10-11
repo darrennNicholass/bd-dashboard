@@ -28,6 +28,7 @@ Cara menjalankan:
 
 from __future__ import annotations
 
+import copy
 import html
 import textwrap
 
@@ -1163,6 +1164,51 @@ DARK_STYLE = """
   [data-testid="stSelectbox"] > div > div {
     background: #13243d !important; border-color: #355174 !important;
   }
+  div[class*="st-key-sndcard_"] { padding: 1.35rem .7rem .9rem .7rem; }
+  .snd-partner-head { margin: .15rem 0 1.5rem 0; }
+  .snd-partner-name {
+    color: #f3f7ff; font-family: "Plus Jakarta Sans", sans-serif;
+    font-size: 1.5rem; font-weight: 720; line-height: 1.25;
+    letter-spacing: -.025em;
+  }
+  .snd-status-row {
+    display: flex; flex-wrap: wrap; gap: .65rem; margin: 1rem 0 2rem 0;
+  }
+  .snd-status {
+    color: #b9c8df; background: #12243d; border: 1px solid #2d486b;
+    border-radius: 999px; padding: .38rem .75rem; font-size: .82rem;
+  }
+  .snd-status strong { color: #edf4ff; font-weight: 650; }
+  .snd-last-checked {
+    color: #8398b5; font-size: .76rem; align-self: center; padding: .38rem .1rem;
+  }
+  .snd-editor-title {
+    color: #dce9ff; font-family: "Plus Jakarta Sans", sans-serif;
+    font-size: 1rem; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; margin: .75rem 0 .8rem 0;
+  }
+  .snd-editor-separator {
+    height: 1px; background: linear-gradient(90deg, #294664, transparent);
+    margin: 2.25rem 0 1.55rem 0;
+  }
+  div[class*="st-key-snd_function_block_"] { max-width: 520px; margin-bottom: .25rem; }
+  div[class*="st-key-snd_actions_"] { margin-top: 2.1rem; padding-top: .3rem; }
+  div[class*="st-key-snd_filters"] {
+    background: linear-gradient(145deg, rgba(19,37,62,.94), rgba(12,27,47,.94));
+    border-color: #2b4669 !important; padding: 1rem 1.15rem 1.15rem 1.15rem;
+    margin-bottom: 1.15rem;
+  }
+  .snd-summary-row {
+    display: flex; flex-wrap: wrap; gap: .55rem; margin: .2rem 0 1.25rem 0;
+  }
+  .snd-summary-item {
+    color: #aebfda; background: rgba(18,36,61,.72); border: 1px solid #294665;
+    border-radius: 10px; padding: .4rem .7rem; font-size: .8rem;
+  }
+  .snd-summary-item strong { color: #eef5ff; margin-right: .2rem; }
+  div[class*="st-key-sndcard_"] [data-testid="stDataFrame"] {
+    border: 1px solid #263f60; border-radius: 14px; overflow: hidden;
+  }
   [data-testid="stProgress"] > div > div { background: linear-gradient(90deg, #2f72d9, #53b5ff) !important; }
   @media (max-width: 900px) {
     .block-container { padding-left: 1rem; padding-right: 1rem; }
@@ -2071,6 +2117,57 @@ SND_STATUS_MARK = {
 }
 
 
+def _snd_editor_key(kind: str, partner_id: str) -> str:
+    revision = st.session_state.get(f"snd_editor_revision_{partner_id}", 0)
+    return f"snd_{kind}_{partner_id}_{revision}"
+
+
+def _snd_cache_partner_draft(partner_id: str) -> None:
+    """Keep unsaved widget state isolated when the selected partner changes."""
+    function_key = f"snd_function_{partner_id}"
+    if function_key in st.session_state:
+        st.session_state[f"snd_draft_function_{partner_id}"] = st.session_state[function_key]
+    for kind in ("supply", "demand"):
+        widget_key = _snd_editor_key(kind, partner_id)
+        if widget_key in st.session_state:
+            st.session_state[f"snd_draft_{kind}_{partner_id}"] = copy.deepcopy(
+                st.session_state[widget_key]
+            )
+
+
+def _snd_apply_editor_state(frame: pd.DataFrame, state: dict) -> pd.DataFrame:
+    """Apply Streamlit's editor delta to a frame when restoring a draft."""
+    records = frame.to_dict("records")
+    for raw_index, changes in state.get("edited_rows", {}).items():
+        index = int(raw_index)
+        if 0 <= index < len(records):
+            records[index].update(changes)
+    deleted = {int(index) for index in state.get("deleted_rows", [])}
+    records = [row for index, row in enumerate(records) if index not in deleted]
+    for added in state.get("added_rows", []):
+        records.append({"ID": "", "Deliverable": "", "Quantity": None, **added})
+    return pd.DataFrame(records, columns=["ID", "Deliverable", "Quantity"])
+
+
+def _snd_capture_editor_draft(widget_key: str, draft_key: str) -> None:
+    if widget_key in st.session_state:
+        st.session_state[draft_key] = copy.deepcopy(st.session_state[widget_key])
+
+
+def _snd_checked_at_label(result: dict | None) -> str:
+    """Format persisted UTC check metadata for the dashboard timezone."""
+    value = (result or {}).get("checked_at")
+    if not value:
+        return "Not yet"
+    try:
+        checked_at = pd.Timestamp(value)
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.tz_localize("UTC")
+        return checked_at.tz_convert("Asia/Jakarta").strftime("%d %b %Y, %H:%M WIB")
+    except (TypeError, ValueError):
+        return "Unknown"
+
+
 def _snd_editor(rows: list[dict], kind: str, partner_id: str) -> pd.DataFrame:
     selected = [row for row in rows if row["kind"] == kind]
     frame = pd.DataFrame(
@@ -2082,11 +2179,13 @@ def _snd_editor(rows: list[dict], kind: str, partner_id: str) -> pd.DataFrame:
     )
     if frame.empty:
         frame = frame.astype({"ID": "str", "Deliverable": "str", "Quantity": "Int64"})
-    st.markdown(f"#### {kind.title()}")
-    st.caption("Use Add row to add a requirement; select a row and delete it to remove one.")
-    revision = st.session_state.get("snd_editor_revision", 0)
+    st.markdown(f'<div class="snd-editor-title">{kind.title()}</div>', unsafe_allow_html=True)
+    widget_key = _snd_editor_key(kind, partner_id)
+    draft_key = f"snd_draft_{kind}_{partner_id}"
+    if widget_key not in st.session_state and draft_key in st.session_state:
+        frame = _snd_apply_editor_state(frame, st.session_state[draft_key])
     return st.data_editor(
-        frame, num_rows="dynamic", hide_index=True, width="stretch",
+        frame, num_rows="dynamic", hide_index=True, width="stretch", height=230, row_height=42,
         column_order=["Deliverable", "Quantity"],
         column_config={
             "ID": None,
@@ -2095,7 +2194,9 @@ def _snd_editor(rows: list[dict], kind: str, partner_id: str) -> pd.DataFrame:
                 "Quantity", min_value=1, step=1, required=True, width="small", format="%d"
             ),
         },
-        key=f"snd_{kind}_{partner_id}_{revision}",
+        key=widget_key,
+        on_change=_snd_capture_editor_draft,
+        args=(widget_key, draft_key),
     )
 
 
@@ -2160,75 +2261,163 @@ def tab_snd_tracker(data: dict) -> None:
         st.info("S&D requirements and evidence are available to members only.", icon=":material/lock:")
         return
 
-    active = data["frame"].df_partner_active
-    if active.empty:
+    frame = data["frame"]
+    active_all = frame.df_partner_active
+    if active_all.empty:
         empty_state("No active partners in this period.")
         return
-    names = sorted(active["partner_name"].astype(str).unique(), key=str.casefold)
+
+    month_frames = {"All": active_all}
+    source_partners = getattr(frame, "df_partner", active_all)
+    reference_date = pd.Timestamp(
+        getattr(frame, "reference_date", pd.Timestamp.today().normalize())
+    ).normalize()
+    scope_months = tuple(getattr(frame, "months", periods.TERM_MONTHS))
+    for month in scope_months:
+        if periods.month_to_period(month, today=reference_date).start_time.normalize() > reference_date:
+            continue
+        snapshot = periods.active_partner_scope(source_partners, month, today=reference_date)
+        if not snapshot.empty:
+            month_frames[month.title()] = snapshot
+
     try:
         store = get_store()
-        resolutions = snd_tracker.active_partner_functions(active, store.get_partner_function_assignments())
-        functions = {key: resolution.value for key, resolution in resolutions.items()}
+        assignments = store.get_partner_function_assignments()
         counts = store.requirement_counts()
     except SNDStoreError as exc:
         st.error(str(exc))
         return
-    st.metric("Active Partners", len(names))
 
-    search_col, filter_col = st.columns([2, 1])
-    with search_col:
-        search = st.text_input("Search Partner", placeholder="Search active partners").casefold().strip()
-    with filter_col:
-        category = st.selectbox("Function", ["All", "ELDs", "EwAs", "SS", "Unassigned"], key="snd_category")
-
-    shown = [
-        name for name in names
-        if search in name.casefold()
-        and (category == "All" or
-             (category == "Unassigned" and not functions.get(partner_key(name))) or
-             functions.get(partner_key(name)) == category)
+    month_options = list(month_frames)
+    if st.session_state.get("snd_month_filter") not in month_options:
+        st.session_state.snd_month_filter = "All"
+    status_options = [
+        "All", "Not Configured", "Configured", "Fulfilled", "Missing Proof", "Needs Review",
     ]
-    if not shown:
-        empty_state("No partners match the search and function filter.")
+    with st.container(border=True, key="snd_filters"):
+        month_col, status_col = st.columns(2, gap="large")
+        with month_col:
+            selected_month = st.selectbox("Month", month_options, key="snd_month_filter")
+        with status_col:
+            selected_status = st.selectbox("Status", status_options, key="snd_status_filter")
+        search = st.text_input(
+            "Search Partner", placeholder="Search partner name...", key="snd_partner_search",
+        ).casefold().strip()
+
+        active = month_frames[selected_month]
+        names = sorted(active["partner_name"].astype(str).unique(), key=str.casefold)
+        resolutions = snd_tracker.active_partner_functions(active, assignments)
+        partner_state = {}
+        for name in names:
+            key = partner_key(name)
+            function = resolutions[key].value
+            requirements = store.list_requirements(name) if counts.get(key, 0) else []
+            signature = requirement_signature(requirements, function) if requirements and function else ""
+            previous = store.get_check(name, signature) if signature else None
+            latest_key = f"snd_latest_check_{key}"
+            latest = st.session_state.get(latest_key)
+            if latest and latest.get("signature") == signature:
+                previous = copy.deepcopy(latest["result"])
+            elif latest:
+                st.session_state.pop(latest_key, None)
+            partner_state[name] = {
+                "function": function,
+                "requirements": requirements,
+                "signature": signature,
+                "previous": previous,
+                "status": snd_tracker.partner_fulfillment_status(requirements, function, previous),
+            }
+
+        shown = [
+            name for name in names
+            if search in name.casefold()
+            and (selected_status == "All" or partner_state[name]["status"] == selected_status)
+        ]
+        selected_name = None
+        if shown:
+            if st.session_state.get("snd_selected_partner") not in shown:
+                st.session_state.snd_selected_partner = shown[0]
+            selected_name = st.selectbox(
+                "Select Partner", shown, key="snd_selected_partner",
+                placeholder="Select a partner",
+            )
+
+    if not shown or selected_name is None:
+        previous_name = st.session_state.get("snd_workspace_partner")
+        if previous_name:
+            _snd_cache_partner_draft(partner_key(previous_name))
+        st.session_state.snd_workspace_partner = None
+        empty_state("No partners match the current filters.")
         return
 
-    selected_key = st.session_state.get("snd_selected_partner")
-    for name in shown:
-        key = partner_key(name)
-        function = functions.get(key)
-        requirements_count = counts.get(key, 0)
-        requirements = store.list_requirements(name) if requirements_count else []
-        signature = requirement_signature(requirements, function or "") if requirements else ""
-        previous = store.get_check(name, signature) if signature else None
-        selected = selected_key == key
-        setup = "Configured" if requirements_count else "Not configured"
-        progress = f"{previous['overall_percent']:.0f}%" if previous else "Not checked"
-        with st.expander(
-            f"{name} · {function or 'Unassigned'} · S&D Setup: {setup} · Fulfillment: {progress}",
-            expanded=selected,
-        ):
-            if not selected:
-                if st.button("Manage S&D", key=f"snd_manage_{key}"):
-                    st.session_state.snd_selected_partner = key
-                    st.rerun()
-                continue
+    previous_name = st.session_state.get("snd_workspace_partner")
+    if previous_name and previous_name != selected_name:
+        _snd_cache_partner_draft(partner_key(previous_name))
+    st.session_state.snd_workspace_partner = selected_name
 
-            chosen = function
-            if function:
-                st.markdown(f"**Function** · `{function}`")
-                st.caption("Auto-detected from ESSM" if resolutions[key].source == "essm"
-                           else "Saved partner function")
-            else:
-                st.caption("Function/category could not be identified unambiguously from ESSM.")
-                chosen = st.selectbox(
-                    "Function / category", ["ELDs", "EwAs", "SS"], index=None,
-                    placeholder="Select function", key=f"snd_function_{key}",
-                )
-                if not chosen:
-                    st.warning("Select the partner function before saving S&D requirements.")
-            supply = _snd_editor(requirements, "supply", key)
-            demand = _snd_editor(requirements, "demand", key)
-            save_col, check_col = st.columns(2)
+    filtered_statuses = [partner_state[name]["status"] for name in shown]
+    summary_items = [
+        (len(shown), "matching partners"),
+        (filtered_statuses.count("Configured"), "configured"),
+        (filtered_statuses.count("Fulfilled"), "fulfilled"),
+        (filtered_statuses.count("Missing Proof"), "missing proof"),
+        (filtered_statuses.count("Needs Review"), "needs review"),
+    ]
+    st.markdown(
+        '<div class="snd-summary-row">' + "".join(
+            f'<span class="snd-summary-item"><strong>{count}</strong>{label}</span>'
+            for count, label in summary_items
+        ) + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    name = selected_name
+    key = partner_key(name)
+    function = partner_state[name]["function"]
+    requirements = partner_state[name]["requirements"]
+    signature = partner_state[name]["signature"]
+    previous = partner_state[name]["previous"]
+    workflow_status = partner_state[name]["status"]
+    setup = "Configured" if function and requirements else "Not configured"
+    progress = (
+        f"{workflow_status} · {previous['overall_percent']:.0f}%"
+        if previous else "Not checked"
+    )
+    function_key = f"snd_function_{key}"
+    function_draft_key = f"snd_draft_function_{key}"
+    if function_key not in st.session_state and function_draft_key in st.session_state:
+        st.session_state[function_key] = st.session_state[function_draft_key]
+
+    with st.container(border=True, key=f"sndcard_{key}"):
+        st.markdown(
+            f'<div class="snd-partner-head"><div class="snd-partner-name">'
+            f'{html.escape(name)}</div></div>',
+            unsafe_allow_html=True,
+        )
+        with st.container(key=f"snd_function_block_{key}"):
+            function_index = ["ELDs", "EwAs", "SS"].index(function) if function else None
+            chosen = st.selectbox(
+                "Function", ["ELDs", "EwAs", "SS"], index=function_index,
+                placeholder="Select Function", key=function_key,
+            )
+        st.markdown(
+            '<div class="snd-status-row">'
+            f'<span class="snd-status">S&amp;D Setup: <strong>{setup}</strong></span>'
+            f'<span class="snd-status">Fulfillment: <strong>{progress}</strong></span>'
+            f'<span class="snd-last-checked">Last checked: '
+            f'{html.escape(_snd_checked_at_label(previous))}</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if not chosen:
+            st.warning("Select the partner Function before saving S&D requirements.")
+
+        supply = _snd_editor(requirements, "supply", key)
+        st.markdown('<div class="snd-editor-separator"></div>', unsafe_allow_html=True)
+        demand = _snd_editor(requirements, "demand", key)
+
+        with st.container(key=f"snd_actions_{key}"):
+            save_col, check_col = st.columns(2, gap="large")
             with save_col:
                 if st.button("Save S&D Requirements", type="primary", key=f"snd_save_{key}",
                              width="stretch", disabled=not chosen):
@@ -2241,28 +2430,32 @@ def tab_snd_tracker(data: dict) -> None:
                     except (ValueError, SNDStoreError) as exc:
                         st.error(str(exc))
                     else:
-                        st.session_state.snd_editor_revision = st.session_state.get("snd_editor_revision", 0) + 1
+                        revision_key = f"snd_editor_revision_{key}"
+                        st.session_state[revision_key] = st.session_state.get(revision_key, 0) + 1
+                        for kind in ("function", "supply", "demand"):
+                            st.session_state.pop(f"snd_draft_{kind}_{key}", None)
+                        st.session_state.pop(f"snd_latest_check_{key}", None)
                         st.toast(f"Saved {len(saved)} requirements.")
                         st.rerun()
             with check_col:
                 if st.button(
                     "↻ Check Fulfillment", type="secondary",
-                    disabled=not snd_tracker.can_check_fulfillment(requirements, function),
+                    disabled=(chosen != function or not snd_tracker.can_check_fulfillment(requirements, function)),
                     key=f"snd_check_{key}", width="stretch",
                 ):
                     try:
                         with st.spinner("Checking proof filenames in Google Drive..."):
-                            previous = snd_tracker.check_partner_fulfillment(
-                                name, function, store=store
-                            )
+                            previous = snd_tracker.check_partner_fulfillment(name, store=store)
                     except (DriveServiceError, ValueError, SNDStoreError) as exc:
                         st.error(str(exc))
                     else:
+                        st.session_state[f"snd_latest_check_{key}"] = {
+                            "signature": signature,
+                            "result": copy.deepcopy(previous),
+                        }
                         st.rerun()
-            if previous:
-                _snd_check_results(previous)
-            elif requirements:
-                st.caption("Check Fulfillment to scan the saved requirements against Drive proof filenames.")
+        if previous:
+            _snd_check_results(previous)
 # ---------------------------------------------------------------------------
 # Section baru: post-partnership & masa berakhir
 # ---------------------------------------------------------------------------

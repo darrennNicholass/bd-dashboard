@@ -65,8 +65,11 @@ def partner_folder_score(partner_name: str, folder_name: str) -> float:
     if left.replace(" ", "") == right.replace(" ", ""):
         return 0.99
     left_tokens, right_tokens = set(left.split()), set(right.split())
-    smaller = min((left_tokens, right_tokens), key=len)
-    if smaller <= max((left_tokens, right_tokens), key=len) and len("".join(smaller)) >= 5:
+    if left_tokens <= right_tokens or right_tokens <= left_tokens:
+        smaller = left_tokens if len(left_tokens) <= len(right_tokens) else right_tokens
+    else:
+        smaller = set()
+    if smaller and len("".join(smaller)) >= 5:
         return 0.92
     return max(fuzz.ratio(left, right), fuzz.token_sort_ratio(left, right)) / 100
 

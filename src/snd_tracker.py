@@ -17,24 +17,21 @@ class FunctionResolution:
     source: str | None = None
 
 
-def resolve_partner_function(essm_function, persisted: dict | None = None) -> FunctionResolution:
+def resolve_partner_function(persisted: dict | None = None) -> FunctionResolution:
+    """Return only a Function explicitly selected for the S&D tracker."""
     persisted = persisted or {}
     manual = normalize_partner_function(persisted.get("function"))
-    if manual and persisted.get("source", "manual") == "manual":
+    if manual and persisted.get("source") == "manual":
         return FunctionResolution(manual, "manual")
-    detected = normalize_partner_function(essm_function)
-    return FunctionResolution(detected, "essm" if detected else None)
+    return FunctionResolution(None, None)
 
 
 def active_partner_functions(active: pd.DataFrame, assignments: dict) -> dict[str, FunctionResolution]:
-    candidates: dict[str, set[str]] = {}
-    for row in active.to_dict("records"):
-        values = candidates.setdefault(partner_key(row["partner_name"]), set())
-        if function := normalize_partner_function(row.get("function")):
-            values.add(function)
+    """Resolve S&D Functions without reading ESSM or Market Research values."""
+    keys = {partner_key(name) for name in active["partner_name"].astype(str)}
     return {
-        key: resolve_partner_function(next(iter(values)) if len(values) == 1 else None, assignments.get(key))
-        for key, values in candidates.items()
+        key: resolve_partner_function(assignments.get(key))
+        for key in keys
     }
 
 
@@ -42,16 +39,14 @@ def save_partner_requirements(
     partner_name: str, active: pd.DataFrame, requirements: list[dict], *, store,
     manual_function: str | None = None,
 ) -> list[dict]:
-    resolutions = active_partner_functions(active, store.get_partner_function_assignments())
-    resolution = resolutions.get(partner_key(partner_name))
-    if resolution is None:
+    active_keys = {partner_key(name) for name in active["partner_name"].astype(str)}
+    if partner_key(partner_name) not in active_keys:
         raise ValueError("Partner tidak ditemukan dalam daftar partner aktif ESSM.")
-    if resolution.value is None:
-        resolution = FunctionResolution(normalize_partner_function(manual_function), "manual")
-    if resolution.value is None:
+    function = normalize_partner_function(manual_function)
+    if function is None:
         raise ValueError("Select the partner function before saving S&D requirements.")
     return store.replace_requirements(
-        partner_name, resolution.value, requirements, function_source=resolution.source,
+        partner_name, function, requirements, function_source="manual",
     )
 
 
@@ -59,19 +54,37 @@ def can_check_fulfillment(requirements: list[dict], function) -> bool:
     return bool(requirements) and normalize_partner_function(function) is not None
 
 
+def partner_fulfillment_status(
+    requirements: list[dict], function: str | None, check: dict | None,
+) -> str:
+    """Return one exclusive workflow status for S&D navigation filters."""
+    if not requirements or normalize_partner_function(function) is None:
+        return "Not Configured"
+    if not check:
+        return "Configured"
+    status = check.get("status")
+    if status == "COMPLETED":
+        return "Fulfilled"
+    if status == "NEEDS_REVIEW":
+        return "Needs Review"
+    if status in {"MISSING", "PARTIAL"}:
+        return "Missing Proof"
+    return "Configured"
+
+
 def check_partner_fulfillment(
     partner_name: str,
-    function: str,
     *,
     store: SNDStore | None = None,
     drive: GoogleDriveService | None = None,
     root_id: str | None = None,
 ) -> dict:
-    """Make Drive requests only when the member presses Check Fulfillment."""
-    function = normalize_partner_function(function)
+    """Scan Drive using the partner's persisted manual S&D Function."""
+    store = store or get_store()
+    assignment = store.get_partner_function_assignments().get(partner_key(partner_name))
+    function = resolve_partner_function(assignment).value
     if function is None:
         raise ValueError("Select the partner function before checking fulfillment.")
-    store = store or get_store()
     requirements = store.list_requirements(partner_name)
     if not requirements:
         raise ValueError("Konfigurasi S&D partner belum disimpan.")
@@ -86,5 +99,6 @@ def check_partner_fulfillment(
     result["warnings"] = scan["warnings"]
     if scan["partner_match"] != "matched":
         result["status"] = "NEEDS_REVIEW"
-    store.save_check(partner_name, signature, result)
-    return result
+    # save_check replaces the complete previous result; warnings and match state
+    # from an older scan are never merged into this fresh Drive response.
+    return store.save_check(partner_name, signature, result)

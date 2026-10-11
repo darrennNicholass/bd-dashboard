@@ -30,11 +30,12 @@ def _now() -> str:
 def _function_assignment(data: dict) -> dict | None:
     function = normalize_partner_function(data.get("function"))
     if function:
-        return {"function": function, "source": data.get("function_source", "manual")}
+        source = data.get("function_source")
+        return {"function": function, "source": source if source in {"manual", "essm"} else "legacy"}
     # Compatibility with old rows that duplicated the function in requirements.
     legacy = {value for row in data.get("requirements", [])
               if (value := normalize_partner_function(row.get("function")))}
-    return {"function": next(iter(legacy)), "source": "manual"} if len(legacy) == 1 else None
+    return {"function": next(iter(legacy)), "source": "legacy"} if len(legacy) == 1 else None
 
 
 class GoogleSheetsSNDStore:
@@ -147,14 +148,10 @@ class GoogleSheetsSNDStore:
         function = normalize_partner_function(function)
         if function not in FUNCTIONS:
             raise ValueError("Fungsi partner harus ELDs, EwAs, atau SS.")
-        if function_source not in {"manual", "essm"}:
-            raise ValueError("Sumber fungsi partner tidak valid.")
+        if function_source != "manual":
+            raise ValueError("Fungsi S&D harus dipilih secara manual.")
         validated = validate_requirements(requirements)
         data = self._data(partner_name)
-        existing = _function_assignment(data)
-        if existing and existing["source"] == "manual" and function_source == "essm":
-            function = existing["function"]
-            function_source = "manual"
         old = {item["id"]: item for item in data.get("requirements", [])}
         now = _now()
         data["partner_name"] = partner_name
@@ -204,11 +201,25 @@ class GoogleSheetsSNDStore:
             data["invoice_exception"] = reason
         self._save(partner_name, data)
 
-    def save_check(self, partner_name: str, signature: str, result: dict) -> None:
+    def save_check(self, partner_name: str, signature: str, result: dict) -> dict:
+        """Replace the partner's previous check and return the stored result."""
         data = self._data(partner_name)
-        data["check"] = {"signature": signature, "result": clean_check_result(result), "checked_at": _now()}
+        checked_at = _now()
+        stored = clean_check_result({key: value for key, value in result.items()
+                                     if key != "checked_at"})
+        data["check"] = {
+            "signature": signature,
+            "result": stored,
+            "checked_at": checked_at,
+        }
         self._save(partner_name, data)
+        return {**stored, "checked_at": checked_at}
 
     def get_check(self, partner_name: str, signature: str) -> dict | None:
         check = self._data(partner_name).get("check", {})
-        return clean_check_result(check["result"]) if check.get("signature") == signature else None
+        if check.get("signature") != signature:
+            return None
+        result = clean_check_result(check["result"])
+        if check.get("checked_at"):
+            result["checked_at"] = check["checked_at"]
+        return result

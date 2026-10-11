@@ -1,5 +1,6 @@
 """Isolated Streamlit harness for the production S&D view; no external I/O."""
 import ast
+import copy
 import html
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 import streamlit as st
 
-from src import preparation, snd_tracker
+from src import periods, preparation, snd_tracker
 from src.google_drive_service import DriveServiceError
 from src.snd_matching import requirement_signature
 from src.snd_security import may_access_real_snd
@@ -15,8 +16,9 @@ from src.snd_store import SNDStore, SNDStoreError, partner_key
 
 app_path = Path(__file__).resolve().parents[1] / "app.py"
 tree = ast.parse(app_path.read_text(encoding="utf-8"))
-names = {"section_title", "empty_state", "_snd_editor", "_snd_editor_rows",
-         "_snd_check_results", "tab_snd_tracker"}
+names = {"section_title", "empty_state", "_snd_editor_key", "_snd_cache_partner_draft",
+         "_snd_apply_editor_state", "_snd_capture_editor_draft", "_snd_checked_at_label", "_snd_editor",
+         "_snd_editor_rows", "_snd_check_results", "tab_snd_tracker"}
 nodes = [node for node in tree.body if
          (isinstance(node, ast.FunctionDef) and node.name in names) or
          (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and
@@ -28,5 +30,53 @@ def get_store():
     return SNDStore(st.session_state.test_db_path)
 
 
-active = pd.DataFrame([{"partner_name": "Demo Partner", "function": st.session_state.test_function}])
-tab_snd_tracker({"frame": SimpleNamespace(df_partner_active=active)})
+_production_tracker = snd_tracker
+
+
+def _check_partner_fulfillment(partner_name, *, store=None, drive=None, root_id=None):
+    fresh_result = st.session_state.get("test_fresh_check")
+    if fresh_result is None:
+        return _production_tracker.check_partner_fulfillment(
+            partner_name, store=store, drive=drive, root_id=root_id,
+        )
+    store = store or get_store()
+    assignment = store.get_partner_function_assignments().get(partner_key(partner_name))
+    function = _production_tracker.resolve_partner_function(assignment).value
+    requirements = store.list_requirements(partner_name)
+    signature = requirement_signature(requirements, function)
+    st.session_state.test_check_calls = st.session_state.get("test_check_calls", 0) + 1
+    return store.save_check(partner_name, signature, copy.deepcopy(fresh_result))
+
+
+snd_tracker = SimpleNamespace(
+    active_partner_functions=_production_tracker.active_partner_functions,
+    partner_fulfillment_status=_production_tracker.partner_fulfillment_status,
+    can_check_fulfillment=_production_tracker.can_check_fulfillment,
+    save_partner_requirements=_production_tracker.save_partner_requirements,
+    check_partner_fulfillment=_check_partner_fulfillment,
+)
+
+
+today = pd.Timestamp("2026-10-07")
+specs = st.session_state.get("test_partner_specs") or [
+    {"name": name, "end": "2027-01"}
+    for name in st.session_state.get("test_partner_names", ["Demo Partner"])
+]
+source = pd.DataFrame([
+    {
+        "partner_name": item["name"],
+        "function": st.session_state.test_function,
+        "has_loa": True,
+        "end_month": pd.Period(item.get("end", "2027-01"), freq="M"),
+        "end_date": pd.Period(item.get("end", "2027-01"), freq="M").end_time.normalize(),
+    }
+    for item in specs
+])
+months = tuple(st.session_state.get("test_months", ("august", "september", "october")))
+frame = SimpleNamespace(
+    df_partner=source,
+    df_partner_active=periods.active_partner_scope(source, months, today=today),
+    months=months,
+    reference_date=today,
+)
+tab_snd_tracker({"frame": frame})

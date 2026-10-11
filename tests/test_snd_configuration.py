@@ -16,7 +16,7 @@ from src.snd_requirements import validate_requirements
 from src.snd_store import SNDStore
 from src.snd_tracker import (
     active_partner_functions, can_check_fulfillment, check_partner_fulfillment,
-    resolve_partner_function, save_partner_requirements,
+    partner_fulfillment_status, resolve_partner_function, save_partner_requirements,
 )
 
 
@@ -36,11 +36,11 @@ class FunctionTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(preparation.normalize_partner_function(label), expected)
 
-    def test_manual_override_precedes_essm_but_auto_save_does_not(self):
-        self.assertEqual(resolve_partner_function("SS", {"function": "ELD", "source": "manual"}).value, "ELDs")
-        self.assertEqual(resolve_partner_function("SS", {"function": "ELDs", "source": "essm"}).value, "SS")
-        self.assertIsNone(resolve_partner_function(None, {"function": "ELDs", "source": "essm"}).value)
-        self.assertEqual(resolve_partner_function("EWA", {"function": "unknown"}).value, "EwAs")
+    def test_only_explicit_manual_assignments_resolve(self):
+        self.assertEqual(resolve_partner_function({"function": "ELD", "source": "manual"}).value, "ELDs")
+        self.assertIsNone(resolve_partner_function({"function": "ELDs", "source": "essm"}).value)
+        self.assertIsNone(resolve_partner_function({"function": "EwAs", "source": "legacy"}).value)
+        self.assertIsNone(resolve_partner_function({"function": "SS"}).value)
 
     def test_essm_provenance_is_unambiguous_and_not_notes_or_industry(self):
         partners = pd.DataFrame([
@@ -70,6 +70,16 @@ class FunctionTests(unittest.TestCase):
         mr = pd.DataFrame([{"partner_name": "Demo", "source_tab": "[ELDs] Market Research"}])
         self.assertTrue(preparation.attach_partner_functions(partners, mr)["function"].isna().all())
 
+    def test_snd_ignores_essm_and_market_research_functions(self):
+        partners = pd.DataFrame([{"partner_name": "Demo", "function": None}])
+        mr = pd.DataFrame([{"partner_name": "Demo", "source_tab": "[ELDs] Market Research"}])
+        active = preparation.attach_partner_functions(partners, mr)
+        self.assertEqual(active.iloc[0]["function"], "ELDs")
+        self.assertIsNone(active_partner_functions(active, {})["demo"].value)
+        self.assertIsNone(active_partner_functions(
+            active, {"demo": {"function": "SS", "source": "essm"}},
+        )["demo"].value)
+
     def test_drive_names_normalize_and_ambiguity_is_rejected(self):
         folder = {"id": "a", "name": "  DEMO__Partner-Clinic "}
         self.assertEqual(select_partner_folder("Demo Partner Clinic", [folder])[1], "matched")
@@ -82,8 +92,29 @@ class FunctionTests(unittest.TestCase):
         self.assertFalse(can_check_fulfillment([], "ELDs"))
         self.assertFalse(can_check_fulfillment([requirement()], None))
         self.assertTrue(can_check_fulfillment([requirement()], "ELD"))
-        with self.assertRaises(ValueError):
-            check_partner_fulfillment("Demo", None)
+        path = Path(__file__).with_name(f".tmp_snd_{uuid4().hex}.sqlite3")
+        try:
+            with self.assertRaises(ValueError):
+                check_partner_fulfillment("Demo", store=SNDStore(path))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_navigation_statuses_follow_fulfillment_state(self):
+        configured = [requirement()]
+        cases = [
+            ([], "ELDs", None, "Not Configured"),
+            (configured, None, None, "Not Configured"),
+            (configured, "ELDs", None, "Configured"),
+            (configured, "ELDs", {"status": "COMPLETED"}, "Fulfilled"),
+            (configured, "ELDs", {"status": "MISSING"}, "Missing Proof"),
+            (configured, "ELDs", {"status": "PARTIAL"}, "Missing Proof"),
+            (configured, "ELDs", {"status": "NEEDS_REVIEW"}, "Needs Review"),
+        ]
+        for requirements, function, check, expected in cases:
+            with self.subTest(expected=expected, check=check):
+                self.assertEqual(
+                    partner_fulfillment_status(requirements, function, check), expected,
+                )
 
 
 class ConfigurationStoreTests(unittest.TestCase):
@@ -104,19 +135,37 @@ class ConfigurationStoreTests(unittest.TestCase):
         self.assertEqual(assignment, {"function": "ELDs", "source": "manual"})
         active["function"] = "SS"
         self.assertEqual(active_partner_functions(active, reopened.get_partner_function_assignments())["demo"].value, "ELDs")
-        save_partner_requirements("Demo", active, [requirement(quantity=2)], store=reopened)
-        self.assertEqual(reopened.get_partner_functions()["demo"], "ELDs")
+        save_partner_requirements(
+            "Demo", active, [requirement(quantity=2)], store=reopened, manual_function="EwAs",
+        )
+        self.assertEqual(reopened.get_partner_functions()["demo"], "EwAs")
 
-    def test_auto_function_saves_without_dropdown_and_tracks_essm_updates(self):
+    def test_essm_function_cannot_save_without_manual_selection(self):
         active = pd.DataFrame([{"partner_name": "Demo", "function": "ELD's"}])
-        save_partner_requirements("Demo", active, [requirement()], store=self.store)
-        self.assertEqual(self.store.get_partner_function_assignments()["demo"]["source"], "essm")
-        active["function"] = "EwA"
-        save_partner_requirements("Demo", active, [requirement()], store=self.store)
-        self.assertEqual(self.store.get_partner_functions()["demo"], "EwAs")
+        with self.assertRaisesRegex(ValueError, "Select the partner function"):
+            save_partner_requirements("Demo", active, [requirement()], store=self.store)
+        self.assertEqual(self.store.get_partner_function_assignments(), {})
         with closing(sqlite3.connect(self.path)) as connection:
             fields = {row[1] for row in connection.execute("PRAGMA table_info(requirements)")}
         self.assertFalse({"notes", "function"} & fields)
+
+    def test_check_uses_saved_manual_function(self):
+        class FakeDrive:
+            function = None
+
+            def scan_partner_evidence(self, partner_name, function, root_id):
+                self.function = function
+                return {"partner_match": "matched", "function": function,
+                        "warnings": [], "evidence": []}
+
+        active = pd.DataFrame([{"partner_name": "Demo", "function": "SS"}])
+        save_partner_requirements(
+            "Demo", active, [requirement()], store=self.store, manual_function="EwAs",
+        )
+        drive = FakeDrive()
+        result = check_partner_fulfillment("Demo", store=self.store, drive=drive, root_id="root")
+        self.assertEqual(drive.function, "EwAs")
+        self.assertEqual(result["function"], "EwAs")
 
     def test_unknown_partner_is_rejected(self):
         active = pd.DataFrame([{"partner_name": "Demo", "function": "ELDs"}])
@@ -154,6 +203,10 @@ class ConfigurationStoreTests(unittest.TestCase):
         self.assertNotIn("notes", rows[0])
         self.assertNotIn("function", rows[0])
         self.assertEqual(self.store.get_partner_functions()["demo"], "EwAs")
+        assignment = self.store.get_partner_function_assignments()["demo"]
+        self.assertEqual(assignment, {"function": "EwAs", "source": "legacy"})
+        active = pd.DataFrame([{"partner_name": "Demo", "function": "SS"}])
+        self.assertIsNone(active_partner_functions(active, {"demo": assignment})["demo"].value)
         saved = self.store.replace_requirements("Demo", "EwAs", rows)
         self.assertEqual(saved[0]["created_at"], "created")
         self.assertEqual(SNDStore(self.path).list_requirements("Demo")[0]["name"], "Goodie Bag")
@@ -182,7 +235,7 @@ class LegacyCloudTests(unittest.TestCase):
                 return tab
         tab = Worksheet({"function": "ELD's", "requirements": [requirement(notes="SS", function="ELDs")]})
         store = GoogleSheetsSNDStore("test", spreadsheet=Book())
-        self.assertEqual(store.get_partner_function_assignments()["demo"], {"function": "ELDs", "source": "manual"})
+        self.assertEqual(store.get_partner_function_assignments()["demo"], {"function": "ELDs", "source": "legacy"})
         saved = store.list_requirements("Demo")
         self.assertNotIn("notes", saved[0])
         self.assertNotIn("function", saved[0])
@@ -209,6 +262,32 @@ class DriveHierarchyTests(unittest.TestCase):
         for name, expected in cases.items():
             with self.subTest(name=name):
                 self.assertEqual(normalize_function_folder(name), expected)
+
+    def test_each_manual_function_selects_its_numbered_drive_folder(self):
+        listing = {
+            "root": [self.folder("elds", "1. ELDs"), self.folder("ewas", "2. EwAs"),
+                     self.folder("ss", "3. SS")],
+            "elds": [self.folder("p1", "Partner")],
+            "ewas": [self.folder("p2", "Partner")],
+            "ss": [self.folder("p3", "Partner")],
+        }
+
+        class FakeDrive(GoogleDriveService):
+            def __init__(self):
+                self.visited = []
+
+            def list_children(self, folder_id):
+                self.visited.append(folder_id)
+                return listing.get(folder_id, [])
+
+        for function, folder_id in (("ELDs", "elds"), ("EwAs", "ewas"), ("SS", "ss")):
+            with self.subTest(function=function):
+                drive = FakeDrive()
+                partner, status, matched = drive.find_partner("Partner", function, "root")
+                self.assertEqual((partner["id"], status, matched),
+                                 ({"ELDs": "p1", "EwAs": "p2", "SS": "p3"}[function],
+                                  "matched", function))
+                self.assertEqual(drive.visited, ["root", folder_id])
 
     def test_bi_international_traversal_and_partial_quantity(self):
         listing = {

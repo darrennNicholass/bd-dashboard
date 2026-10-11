@@ -93,7 +93,7 @@ class SNDStore:
             return
         connection.execute("BEGIN IMMEDIATE")
         if "source" not in config_fields:
-            connection.execute("ALTER TABLE partner_functions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+            connection.execute("ALTER TABLE partner_functions ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'")
         if "function" in fields:
             legacy_functions: dict[str, set[str]] = {}
             for row in connection.execute("SELECT partner_key, function FROM requirements"):
@@ -104,7 +104,7 @@ class SNDStore:
                 if len(values) == 1:
                     connection.execute(
                         "INSERT OR IGNORE INTO partner_functions (partner_key,function,updated_at,source) "
-                        "VALUES (?,?,?,'manual')",
+                        "VALUES (?,?,?,'legacy')",
                         (key, next(iter(values)), datetime.now(timezone.utc).isoformat()),
                     )
         if fields.intersection({"notes", "function"}):
@@ -143,18 +143,12 @@ class SNDStore:
         function = normalize_partner_function(function)
         if function not in FUNCTIONS:
             raise ValueError("Fungsi partner harus ELDs, EwAs, atau SS.")
-        if function_source not in {"manual", "essm"}:
-            raise ValueError("Sumber fungsi partner tidak valid.")
+        if function_source != "manual":
+            raise ValueError("Fungsi S&D harus dipilih secara manual.")
         key = partner_key(partner_name)
         validated = validate_requirements(requirements)
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
-            existing = connection.execute(
-                "SELECT function,source FROM partner_functions WHERE partner_key=?", (key,)
-            ).fetchone()
-            if existing and existing["source"] == "manual" and function_source == "essm":
-                function = normalize_partner_function(existing["function"]) or function
-                function_source = "manual"
             old = {
                 row["id"]: row["created_at"] for row in connection.execute(
                     "SELECT id, created_at FROM requirements WHERE partner_key=?", (key,)
@@ -223,7 +217,11 @@ class SNDStore:
                     (key, reason, datetime.now(timezone.utc).isoformat()),
                 )
 
-    def save_check(self, partner_name: str, signature: str, result: dict) -> None:
+    def save_check(self, partner_name: str, signature: str, result: dict) -> dict:
+        """Replace the partner's previous check and return the stored result."""
+        checked_at = datetime.now(timezone.utc).isoformat()
+        stored = clean_check_result({key: value for key, value in result.items()
+                                     if key != "checked_at"})
         with self._connect() as connection:
             connection.execute(
                 "INSERT INTO fulfillment_checks VALUES (?,?,?,?) "
@@ -231,17 +229,22 @@ class SNDStore:
                 "requirements_signature=excluded.requirements_signature, "
                 "result_json=excluded.result_json, checked_at=excluded.checked_at",
                 (partner_key(partner_name), signature,
-                 json.dumps(clean_check_result(result), ensure_ascii=False),
-                 datetime.now(timezone.utc).isoformat()),
+                 json.dumps(stored, ensure_ascii=False), checked_at),
             )
+        return {**stored, "checked_at": checked_at}
 
     def get_check(self, partner_name: str, signature: str) -> dict | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT result_json FROM fulfillment_checks WHERE partner_key=? "
+                "SELECT result_json, checked_at FROM fulfillment_checks WHERE partner_key=? "
                 "AND requirements_signature=?", (partner_key(partner_name), signature),
             ).fetchone()
-        return clean_check_result(json.loads(row["result_json"])) if row else None
+        if not row:
+            return None
+        return {
+            **clean_check_result(json.loads(row["result_json"])),
+            "checked_at": row["checked_at"],
+        }
 
 
 def get_store():

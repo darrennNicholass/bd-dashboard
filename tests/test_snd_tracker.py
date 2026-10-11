@@ -6,7 +6,10 @@ import gspread
 
 from src.google_drive_service import GoogleDriveService, parse_env_setting
 from src.snd_cloud_store import GoogleSheetsSNDStore
-from src.snd_matching import filename_score, match_evidence, normalize_filename, select_partner_folder
+from src.snd_matching import (
+    filename_score, match_evidence, normalize_filename, partner_folder_score,
+    requirement_signature, select_partner_folder,
+)
 from src.snd_security import may_access_real_snd
 from src.snd_store import SNDStore, get_store
 from src.snd_tracker import check_partner_fulfillment
@@ -18,6 +21,21 @@ def req(name="Instagram Story", quantity=4, kind="supply", uid="r1"):
 
 def proof(name, kind="supply", uid=None):
     return {"id": uid or name, "name": name, "kind": kind, "mime_type": "image/png"}
+
+
+def check_result(status, partner_match, warnings):
+    percent = 100.0 if status == "COMPLETED" else 0.0
+    return {
+        "status": status,
+        "function": "ELDs",
+        "partner_match": partner_match,
+        "warnings": warnings,
+        "requirements": [],
+        "unmatched_evidence": [],
+        "supply_percent": percent,
+        "demand_percent": percent,
+        "overall_percent": percent,
+    }
 
 
 class StoreTests(unittest.TestCase):
@@ -108,6 +126,22 @@ class CloudStoreTests(unittest.TestCase):
             reopened.replace_requirements("Mandaya", "ELDs", [])
         self.assertEqual(GoogleSheetsSNDStore("config", spreadsheet=book).requirement_counts()["mandaya"], 1)
 
+        requirements = store.list_requirements("Mandaya")
+        signature = requirement_signature(requirements, "ELDs")
+        store.save_check(
+            "Mandaya", signature,
+            check_result("NEEDS_REVIEW", "needs_review", ["old warning"]),
+        )
+        saved = store.save_check(
+            "Mandaya", signature,
+            check_result("COMPLETED", "matched", []),
+        )
+        latest = GoogleSheetsSNDStore("config", spreadsheet=book).get_check("Mandaya", signature)
+        self.assertEqual(saved["partner_match"], "matched")
+        self.assertEqual(latest["status"], "COMPLETED")
+        self.assertEqual(latest["warnings"], [])
+        self.assertIn("checked_at", latest)
+
 
 class MatchingTests(unittest.TestCase):
     def test_filename_normalization(self):
@@ -156,6 +190,25 @@ class MatchingTests(unittest.TestCase):
         self.assertIsNone(selected)
         self.assertEqual(status, "needs_review")
 
+    def test_aiesec_exact_match_short_circuits_fuzzy_matching(self):
+        folders = [
+            {"name": "AIESEC Indonesia", "id": "aiesec"},
+            {"name": "BI International", "id": "bi"},
+        ]
+        with patch("src.snd_matching.partner_folder_score", side_effect=AssertionError("fuzzy called")):
+            selected, status = select_partner_folder("AIESEC Indonesia", folders)
+        self.assertEqual((selected["id"], status), ("aiesec", "matched"))
+
+    def test_unrelated_equal_sized_token_sets_are_not_high_confidence(self):
+        self.assertLess(partner_folder_score("AIESEC Indonesia", "BI International"), 0.72)
+        self.assertLess(partner_folder_score("AIESEC Indonesia", "Bangor Group"), 0.72)
+        selected, status = select_partner_folder("AIESEC Indonesia", [
+            {"name": "BI International", "id": "bi"},
+            {"name": "Bangor Group", "id": "bangor"},
+        ])
+        self.assertIsNone(selected)
+        self.assertEqual(status, "unmatched")
+
     def test_missing_drive_folder_graceful(self):
         class EmptyDrive(GoogleDriveService):
             def __init__(self):
@@ -180,9 +233,51 @@ class MatchingTests(unittest.TestCase):
             store.replace_requirements("Mandaya", "ELDs", [req("Goodie Bag", 1, "demand")])
             drive = FakeDrive()
             self.assertEqual(drive.calls, 0)
-            result = check_partner_fulfillment("Mandaya", "ELDs", store=store, drive=drive, root_id="root")
+            result = check_partner_fulfillment("Mandaya", store=store, drive=drive, root_id="root")
             self.assertEqual(drive.calls, 1)
             self.assertEqual(result["status"], "COMPLETED")
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_fresh_check_completely_replaces_old_needs_review_result(self):
+        class MatchedDrive:
+            calls = 0
+
+            def scan_partner_evidence(self, partner_name, function, root):
+                self.calls += 1
+                return {
+                    "partner_match": "matched",
+                    "function": function,
+                    "warnings": [],
+                    "evidence": [proof("Broadcast.jpg", "demand")],
+                }
+
+        path = Path(__file__).with_name(".tmp_snd_fresh_check.sqlite3")
+        path.unlink(missing_ok=True)
+        try:
+            store = SNDStore(path)
+            requirements = store.replace_requirements(
+                "AIESEC Indonesia", "ELDs", [req("Broadcast", 1, "demand")],
+            )
+            signature = requirement_signature(requirements, "ELDs")
+            old = store.save_check(
+                "AIESEC Indonesia", signature,
+                check_result("NEEDS_REVIEW", "needs_review", ["old warning"]),
+            )
+
+            drive = MatchedDrive()
+            fresh = check_partner_fulfillment(
+                "AIESEC Indonesia", store=store, drive=drive, root_id="root",
+            )
+            persisted = SNDStore(path).get_check("AIESEC Indonesia", signature)
+
+            self.assertEqual(drive.calls, 1)
+            self.assertEqual(fresh["partner_match"], "matched")
+            self.assertEqual(fresh["warnings"], [])
+            self.assertEqual(fresh["status"], "COMPLETED")
+            self.assertNotEqual(fresh["checked_at"], old["checked_at"])
+            self.assertEqual(persisted, fresh)
+            self.assertNotIn("old warning", persisted["warnings"])
         finally:
             path.unlink(missing_ok=True)
 
