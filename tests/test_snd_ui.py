@@ -1,12 +1,16 @@
 """Exercise the actual S&D widgets in isolation from login and live Sheets."""
+import json
 from pathlib import Path
 import unittest
 from uuid import uuid4
 
 from streamlit.testing.v1 import AppTest
 
+from src.snd_backup import verified_cutover_partners
+from src.snd_cloud_store import GoogleSheetsSNDStore
 from src.snd_matching import requirement_signature
 from src.snd_store import SNDStore
+from tests.fake_sheets import BOOKS, FakeBook
 
 HARNESS_PATH = Path(__file__).with_name("snd_ui_harness.py")
 
@@ -19,7 +23,7 @@ class SNDViewTests(unittest.TestCase):
         self.path.unlink(missing_ok=True)
 
     def app(self, function=None, access="member", partners=None, specs=None, months=None,
-            fresh_check=None):
+            fresh_check=None, backend=None, book_id=None, store_error=None, legacy_path=None):
         app = AppTest.from_file(str(HARNESS_PATH), default_timeout=15)
         app.session_state.test_db_path = str(self.path)
         app.session_state.test_function = function
@@ -27,6 +31,11 @@ class SNDViewTests(unittest.TestCase):
         app.session_state.test_partner_specs = specs
         app.session_state.test_months = months or ("august", "september", "october")
         app.session_state.test_fresh_check = fresh_check
+        app.session_state.test_backend = backend
+        app.session_state.test_book_id = book_id
+        app.session_state.test_cutover_id = "ui-cutover"
+        app.session_state.test_store_error = store_error
+        app.session_state.test_legacy_path = legacy_path
         app.session_state.access_mode = access
         app.run()
         self.assertFalse(app.exception)
@@ -211,3 +220,77 @@ class SNDViewTests(unittest.TestCase):
         self.assertFalse(app.dataframe)
         self.assertFalse(app.button)
         self.assertTrue(any("members only" in info.value for info in app.info))
+
+    def test_new_session_reads_saved_data_and_stale_editor_cannot_overwrite_it(self):
+        self.save_partner("Demo Partner", "ELDs", deliverable="Original")
+        first = self.app()
+        self.save_partner("Demo Partner", "SS", deliverable="Updated in another session")
+        first.run()
+        self.assertFalse(first.exception)
+        self.assertTrue(first.button(key="snd_save_demo partner").disabled)
+        self.assertEqual(first.dataframe[0].value.iloc[0]["Deliverable"], "Original")
+        first.button(key="snd_reload_demo partner").click().run()
+        self.assertFalse(first.exception)
+        self.assertFalse(first.button(key="snd_save_demo partner").disabled)
+        self.assertEqual(first.dataframe[0].value.iloc[0]["Deliverable"], "Updated in another session")
+        reopened = self.app()
+        self.assertEqual(reopened.dataframe[0].value.iloc[0]["Deliverable"], "Updated in another session")
+
+    def test_inactive_and_renamed_partner_records_remain_accessible(self):
+        self.save_partner("Old Partner Name", "ELDs", deliverable="Retained requirement")
+        app = self.app(specs=[{"name": "New Partner Name", "end": "2026-07"}], months=("october",))
+        self.assertFalse(app.exception)
+        self.assertEqual(app.table[0].value.iloc[0]["partner_name"], "Old Partner Name")
+        self.assertEqual(app.table[0].value.iloc[0]["name"], "Retained requirement")
+        self.assertFalse(app.dataframe)
+
+    def test_member_can_download_legacy_database_while_storage_is_disabled(self):
+        self.save_partner("Live Partner", "ELDs", deliverable="Entered on Cloud")
+        before = self.path.read_bytes()
+        app = self.app(store_error="S&D storage is connected but the one-time migration has not been verified yet",
+                       legacy_path=str(self.path))
+        self.assertTrue(any("migration has not been verified" in item.value for item in app.error))
+        self.assertTrue(any("Legacy local S&D database" in item.label for item in app.expander))
+        downloads = {item.proto.label for item in app.get("download_button")}
+        self.assertEqual(downloads, {"Download legacy database (.sqlite3)", "Download legacy snapshot (.json)"})
+        self.assertFalse(app.dataframe)  # No editor can save while storage is disabled.
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_anonymous_never_sees_legacy_database(self):
+        self.save_partner("Live Partner", "ELDs")
+        app = self.app(access="anonymous", legacy_path=str(self.path))
+        self.assertFalse(app.expander)
+        self.assertFalse(app.get("download_button"))
+
+    def test_google_sheets_save_survives_refresh_and_filters_never_write(self):
+        book = FakeBook()
+        verified_cutover_partners({}, GoogleSheetsSNDStore("ui", spreadsheet=book), apply=True,
+                                  migration_id="ui-cutover", source_backup_sha256="0" * 64)
+        book_id = uuid4().hex
+        BOOKS[book_id] = book
+        self.addCleanup(BOOKS.pop, book_id, None)
+        specs = [{"name": "Demo Partner", "end": "2026-09"}, {"name": "Second Partner", "end": "2027-01"}]
+        app = self.app(backend="google", book_id=book_id, specs=specs)
+        app.selectbox(key="snd_function_demo partner").select("EwAs").run()
+        app.session_state["snd_demand_demo partner_0"] = {
+            "edited_rows": {}, "added_rows": [{"Deliverable": "Goodie Bag", "Quantity": 20}],
+            "deleted_rows": [],
+        }
+        app.button(key="snd_save_demo partner").click().run()
+        self.assertFalse(app.error)
+        event = json.loads(book.config.values[-1][1])
+        self.assertEqual(event["changes"]["requirements"][0]["name"], "Goodie Bag")
+
+        refreshed = self.app(backend="google", book_id=book_id, specs=specs)  # New browser session.
+        self.assertEqual(refreshed.selectbox(key="snd_function_demo partner").value, "EwAs")
+        self.assertEqual(refreshed.dataframe[1].value.iloc[0]["Deliverable"], "Goodie Bag")
+        journal = [list(row) for row in book.config.values]
+        refreshed.selectbox(key="snd_month_filter").select("October").run()
+        self.assertNotIn("Demo Partner", refreshed.selectbox(key="snd_selected_partner").options)
+        self.assertEqual(refreshed.table[0].value.iloc[0]["name"], "Goodie Bag")  # Still listed.
+        refreshed.selectbox(key="snd_status_filter").select("Configured").run()
+        refreshed.selectbox(key="snd_month_filter").select("All").run()
+        self.assertFalse(refreshed.exception)
+        self.assertEqual(book.config.values, journal)  # Filtering never writes.
+        self.assertEqual(GoogleSheetsSNDStore("ui", spreadsheet=book, expected_cutover_id="ui-cutover")
+                         .list_requirements("Demo Partner")[0]["quantity"], 20)

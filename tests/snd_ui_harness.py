@@ -2,15 +2,19 @@
 import ast
 import copy
 import html
+import json
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
 import streamlit as st
 
-from src import periods, preparation, snd_tracker
+from src import periods, preparation, snd_backup as _production_backup, snd_tracker
 from src.google_drive_service import DriveServiceError
+from src.snd_cloud_store import GoogleSheetsSNDStore
 from src.snd_matching import requirement_signature
+from src.snd_requirements import requirements_revision
 from src.snd_security import may_access_real_snd
 from src.snd_store import SNDStore, SNDStoreError, partner_key
 
@@ -18,7 +22,7 @@ app_path = Path(__file__).resolve().parents[1] / "app.py"
 tree = ast.parse(app_path.read_text(encoding="utf-8"))
 names = {"section_title", "empty_state", "_snd_editor_key", "_snd_cache_partner_draft",
          "_snd_apply_editor_state", "_snd_capture_editor_draft", "_snd_checked_at_label", "_snd_editor",
-         "_snd_editor_rows", "_snd_check_results", "tab_snd_tracker"}
+         "_snd_editor_rows", "_snd_check_results", "_snd_legacy_rescue_panel", "tab_snd_tracker"}
 nodes = [node for node in tree.body if
          (isinstance(node, ast.FunctionDef) and node.name in names) or
          (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and
@@ -27,7 +31,23 @@ exec(compile(ast.Module(body=nodes, type_ignores=[]), str(app_path), "exec"))
 
 
 def get_store():
+    if st.session_state.get("test_store_error"):
+        raise SNDStoreError(st.session_state.test_store_error)
+    if st.session_state.get("test_backend") == "google":
+        from tests.fake_sheets import BOOKS
+        return GoogleSheetsSNDStore(
+            "ui-test", spreadsheet=BOOKS[st.session_state.test_book_id],
+            expected_cutover_id=st.session_state.get("test_cutover_id"),
+        )
     return SNDStore(st.session_state.test_db_path)
+
+
+def _legacy_sqlite_backup():
+    path = st.session_state.get("test_legacy_path")
+    return _production_backup.legacy_sqlite_backup(Path(path)) if path else None
+
+
+snd_backup = SimpleNamespace(legacy_sqlite_backup=_legacy_sqlite_backup)
 
 
 _production_tracker = snd_tracker

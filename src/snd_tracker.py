@@ -38,6 +38,7 @@ def active_partner_functions(active: pd.DataFrame, assignments: dict) -> dict[st
 def save_partner_requirements(
     partner_name: str, active: pd.DataFrame, requirements: list[dict], *, store,
     manual_function: str | None = None,
+    expected_revision: str | None = None,
 ) -> list[dict]:
     active_keys = {partner_key(name) for name in active["partner_name"].astype(str)}
     if partner_key(partner_name) not in active_keys:
@@ -46,12 +47,33 @@ def save_partner_requirements(
     if function is None:
         raise ValueError("Select the partner function before saving S&D requirements.")
     return store.replace_requirements(
-        partner_name, function, requirements, function_source="manual",
+        partner_name, function, requirements, function_source="manual", expected_revision=expected_revision,
     )
 
 
 def can_check_fulfillment(requirements: list[dict], function) -> bool:
     return bool(requirements) and normalize_partner_function(function) is not None
+
+
+UNMATCHED_EVIDENCE_LIMIT = 100
+
+
+def compact_check_result(result: dict) -> dict:
+    """Keep a stored proof result small enough for one Google Sheets cell.
+
+    Unmatched files only need their kind and name in the UI. Drive IDs, MIME
+    types, and timestamps are dropped and the list is capped; the full count is
+    kept in unmatched_total.
+    """
+    unmatched = result.get("unmatched_evidence", [])
+    return {
+        **result,
+        "unmatched_total": result.get("unmatched_total", len(unmatched)),
+        "unmatched_evidence": [
+            {"kind": item.get("kind"), "name": item.get("name")}
+            for item in unmatched[:UNMATCHED_EVIDENCE_LIMIT]
+        ],
+    }
 
 
 def partner_fulfillment_status(
@@ -101,4 +123,4 @@ def check_partner_fulfillment(
         result["status"] = "NEEDS_REVIEW"
     # save_check replaces the complete previous result; warnings and match state
     # from an older scan are never merged into this fresh Drive response.
-    return store.save_check(partner_name, signature, result)
+    return store.save_check(partner_name, signature, compact_check_result(result))

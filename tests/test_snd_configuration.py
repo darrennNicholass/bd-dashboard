@@ -226,10 +226,12 @@ class LegacyCloudTests(unittest.TestCase):
         class Worksheet:
             def __init__(self, payload):
                 self.values = [HEADER, ["demo", json.dumps(payload), "old"]]
-            def get_all_values(self):
+            def get_all_values(self, **kwargs):
                 return self.values
             def update(self, range_name, values, value_input_option):
                 self.values[1] = values[0]
+            def append_row(self, values, value_input_option, insert_data_option):
+                self.values.append(values)
         class Book:
             def worksheet(self, name):
                 return tab
@@ -240,7 +242,8 @@ class LegacyCloudTests(unittest.TestCase):
         self.assertNotIn("notes", saved[0])
         self.assertNotIn("function", saved[0])
         store.replace_requirements("Demo", "ELDs", saved)
-        payload = json.loads(tab.values[1][1])
+        self.assertEqual(json.loads(tab.values[1][1])["requirements"][0]["notes"], "SS")
+        payload = store._data("Demo")
         self.assertEqual(payload["function"], "ELDs")
         self.assertNotIn("function", payload["requirements"][0])
         self.assertNotIn("notes", payload["requirements"][0])

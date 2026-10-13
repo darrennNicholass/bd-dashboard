@@ -30,14 +30,17 @@ from __future__ import annotations
 
 import copy
 import html
+import json
+from hashlib import sha256
 import textwrap
 
 import pandas as pd
 import streamlit as st
 
-from src import charts, metrics, periods, preparation, sheets, snd_tracker
+from src import charts, metrics, periods, preparation, sheets, snd_backup, snd_tracker
 from src.google_drive_service import DriveServiceError
 from src.snd_matching import requirement_signature
+from src.snd_requirements import requirements_revision
 from src.snd_security import may_access_real_snd
 from src.snd_store import SNDStoreError, get_store, partner_key
 
@@ -2245,10 +2248,54 @@ def _snd_check_results(result: dict) -> None:
                     st.caption(f"? {proof['name']} · possible match ({proof['confidence']:.0%})")
     unmatched = result.get("unmatched_evidence", [])
     if unmatched:
+        total = result.get("unmatched_total", len(unmatched))
         with st.container(border=True):
-            st.markdown(f"#### Unmatched Evidence ({len(unmatched)})")
+            st.markdown(f"#### Unmatched Evidence ({total})")
             for proof in unmatched:
                 st.caption(f"{proof['kind'].title()} · {proof['name']}")
+            if total > len(unmatched):
+                st.caption(f"Showing the first {len(unmatched)} unmatched files.")
+
+
+def _snd_legacy_rescue_panel() -> None:
+    """One-time, read-only download of the previous version's local SQLite file.
+
+    The pre-fix app saved S&D data to a file on the Cloud container. It is not
+    durable, so members can download it for the verified migration. Nothing is
+    written, and the panel disappears once the file no longer exists.
+    """
+    legacy = snd_backup.legacy_sqlite_backup()
+    if legacy is None:
+        return
+    count = legacy.get("requirements")
+    label = "Legacy local S&D database found on this server"
+    with st.expander(label + (f" ({count} requirements)" if count is not None else "")):
+        st.caption(
+            "Recovery copy written by the previous app version. It is NOT durable and is lost on "
+            "reboot or sleep. Download it now and migrate it with the cutover command. It is opened "
+            "read-only here and is never modified."
+        )
+        if legacy.get("error"):
+            st.warning(legacy["error"])
+        else:
+            st.caption(
+                f"{legacy['partners']} partners · {legacy['requirements']} requirements · "
+                f"{legacy['invoice_exceptions']} invoice exceptions · saved between "
+                f"{legacy['first_change'] or 'unknown'} and {legacy['latest_change'] or 'unknown'} (UTC)"
+            )
+        if legacy.get("raw") is not None:
+            st.download_button(
+                "Download legacy database (.sqlite3)", legacy["raw"],
+                file_name=f"snd-legacy-{legacy['sha256'][:12]}.sqlite3",
+                mime="application/octet-stream", key="snd_legacy_sqlite",
+            )
+        if legacy.get("snapshot") is not None:
+            st.download_button(
+                "Download legacy snapshot (.json)",
+                json.dumps(legacy["snapshot"], ensure_ascii=False, indent=2),
+                file_name=f"snd-legacy-{legacy['sha256'][:12]}.json",
+                mime="application/json", key="snd_legacy_json",
+            )
 
 
 def tab_snd_tracker(data: dict) -> None:
@@ -2261,8 +2308,28 @@ def tab_snd_tracker(data: dict) -> None:
         st.info("S&D requirements and evidence are available to members only.", icon=":material/lock:")
         return
 
+    _snd_legacy_rescue_panel()
     frame = data["frame"]
     active_all = frame.df_partner_active
+    try:
+        store = get_store()
+        snapshot = store.export_snapshot()
+        assignments = store.get_partner_function_assignments()
+        counts = store.requirement_counts()
+        saved_rows = store.all_requirements()
+    except SNDStoreError as exc:
+        st.error(str(exc))
+        return
+    reference = sha256(store.storage_identity.encode()).hexdigest()[:10]
+    st.caption(f"Storage: {store.storage_label} · Reference: {reference}")
+    with st.expander(f"All saved requirements & backup ({len(saved_rows)})"):
+        st.caption("Saved records remain available here regardless of partner status, name changes, or filters.")
+        if saved_rows:
+            st.table(pd.DataFrame(saved_rows)[["partner_name", "kind", "name", "quantity"]])
+        st.download_button(
+            "Download S&D backup", json.dumps(snapshot, ensure_ascii=False, indent=2),
+            file_name="snd-backup.json", mime="application/json", key="snd_backup",
+        )
     if active_all.empty:
         empty_state("No active partners in this period.")
         return
@@ -2279,14 +2346,6 @@ def tab_snd_tracker(data: dict) -> None:
         snapshot = periods.active_partner_scope(source_partners, month, today=reference_date)
         if not snapshot.empty:
             month_frames[month.title()] = snapshot
-
-    try:
-        store = get_store()
-        assignments = store.get_partner_function_assignments()
-        counts = store.requirement_counts()
-    except SNDStoreError as exc:
-        st.error(str(exc))
-        return
 
     month_options = list(month_frames)
     if st.session_state.get("snd_month_filter") not in month_options:
@@ -2377,6 +2436,25 @@ def tab_snd_tracker(data: dict) -> None:
     requirements = partner_state[name]["requirements"]
     signature = partner_state[name]["signature"]
     previous = partner_state[name]["previous"]
+    baseline_key = f"snd_baseline_{key}"
+    current_revision = requirements_revision(requirements, assignments.get(key))
+    if baseline_key not in st.session_state:
+        st.session_state[baseline_key] = {
+            "storage": store.storage_identity, "revision": current_revision,
+            "requirements": copy.deepcopy(requirements),
+        }
+    baseline = st.session_state[baseline_key]
+    stale = baseline["storage"] != store.storage_identity or baseline["revision"] != current_revision
+    if stale:
+        st.warning("Saved requirements changed. Your draft is preserved; reload the saved version before editing again.")
+    if st.button("Reload saved requirements (discard draft)", key=f"snd_reload_{key}"):
+        for kind in ("function", "supply", "demand"):
+            st.session_state.pop(f"snd_draft_{kind}_{key}", None)
+        st.session_state.pop(f"snd_function_{key}", None)
+        st.session_state.pop(baseline_key, None)
+        revision_key = f"snd_editor_revision_{key}"
+        st.session_state[revision_key] = st.session_state.get(revision_key, 0) + 1
+        st.rerun()
     workflow_status = partner_state[name]["status"]
     setup = "Configured" if function and requirements else "Not configured"
     progress = (
@@ -2412,20 +2490,21 @@ def tab_snd_tracker(data: dict) -> None:
         if not chosen:
             st.warning("Select the partner Function before saving S&D requirements.")
 
-        supply = _snd_editor(requirements, "supply", key)
+        supply = _snd_editor(baseline["requirements"], "supply", key)
         st.markdown('<div class="snd-editor-separator"></div>', unsafe_allow_html=True)
-        demand = _snd_editor(requirements, "demand", key)
+        demand = _snd_editor(baseline["requirements"], "demand", key)
 
         with st.container(key=f"snd_actions_{key}"):
             save_col, check_col = st.columns(2, gap="large")
             with save_col:
                 if st.button("Save S&D Requirements", type="primary", key=f"snd_save_{key}",
-                             width="stretch", disabled=not chosen):
+                             width="stretch", disabled=not chosen or stale):
                     try:
                         saved = snd_tracker.save_partner_requirements(
                             name, active,
                             _snd_editor_rows(supply, "supply") + _snd_editor_rows(demand, "demand"),
                             store=store, manual_function=chosen,
+                            expected_revision=baseline["revision"],
                         )
                     except (ValueError, SNDStoreError) as exc:
                         st.error(str(exc))
@@ -2435,6 +2514,7 @@ def tab_snd_tracker(data: dict) -> None:
                         for kind in ("function", "supply", "demand"):
                             st.session_state.pop(f"snd_draft_{kind}_{key}", None)
                         st.session_state.pop(f"snd_latest_check_{key}", None)
+                        st.session_state.pop(baseline_key, None)
                         st.toast(f"Saved {len(saved)} requirements.")
                         st.rerun()
             with check_col:

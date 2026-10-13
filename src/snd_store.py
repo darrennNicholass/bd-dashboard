@@ -1,6 +1,6 @@
 """Persistent, member-only S&D configuration and invoice exceptions.
 
-SQLite is the local default; a dedicated Google Sheet is the durable Cloud option.
+Cloud deployments require a dedicated Google Sheet. SQLite is explicit opt-in.
 """
 from __future__ import annotations
 
@@ -8,10 +8,13 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import re
 import sqlite3
 
 from src.preparation import normalize_partner_name, normalize_partner_function
-from src.snd_requirements import validate_requirements, requirement_record, clean_check_result
+from src.snd_requirements import (
+    validate_requirements, requirement_record, clean_check_result, requirements_revision,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / ".local" / "snd_tracker.sqlite3"
@@ -23,6 +26,13 @@ class SNDStoreError(RuntimeError):
     """Safe configuration-store error for display in the dashboard."""
 
 
+class SNDConflictError(SNDStoreError):
+    """A stale edit must never replace a more recent saved configuration."""
+
+
+CONFLICT_MESSAGE = "S&D requirements changed in another session. Reload saved requirements before saving."
+
+
 def partner_key(name: str) -> str:
     key = normalize_partner_name(name)
     if not key:
@@ -31,17 +41,26 @@ def partner_key(name: str) -> str:
 
 
 class SNDStore:
+    storage_label = "Local SQLite (requires a persistent disk and backups)"
+
     def __init__(self, path: str | Path | None = None):
         if path is None:
             from src.google_drive_service import optional_setting
 
             path = optional_setting("SND_DB_PATH")
         self.path = Path(path or DEFAULT_DB)
+        if not self.path.is_absolute():
+            self.path = ROOT / self.path
+        self.path = self.path.resolve()
+        self.storage_identity = f"sqlite:{self.path}"
 
     @contextmanager
     def _connect(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path, timeout=15)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            connection = sqlite3.connect(self.path, timeout=15)
+        except (OSError, sqlite3.Error) as exc:
+            raise SNDStoreError("S&D SQLite storage could not be opened. Check the configured disk and path.") from exc
         connection.row_factory = sqlite3.Row
         try:
             connection.executescript("""
@@ -74,10 +93,19 @@ class SNDStore:
                 result_json TEXT NOT NULL,
                 checked_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS requirement_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                partner_key TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                archived_at TEXT NOT NULL
+            );
             """)
             self._migrate_legacy(connection)
             yield connection
             connection.commit()
+        except sqlite3.Error as exc:
+            connection.rollback()
+            raise SNDStoreError("S&D database operation failed; changes were rolled back.") from exc
         except Exception:
             connection.rollback()
             raise
@@ -137,8 +165,26 @@ class SNDStore:
             ).fetchall()
         return {row["partner_key"]: row["count"] for row in rows}
 
+    def all_requirements(self) -> list[dict]:
+        """Include inactive and renamed partners; never apply dashboard filters."""
+        with self._connect() as connection:
+            return [requirement_record(dict(row)) for row in connection.execute(
+                "SELECT * FROM requirements ORDER BY partner_key, kind DESC, created_at, id"
+            )]
+
+    def export_snapshot(self) -> dict:
+        with self._connect() as connection:
+            if not connection.in_transaction:
+                connection.execute("BEGIN")
+            tables = {table: [dict(row) for row in connection.execute(f"SELECT * FROM {table}")]
+                      for table in ("requirements", "partner_functions", "invoice_exceptions",
+                                    "fulfillment_checks", "requirement_history")}
+        return {"format": "snd-sqlite-snapshot-v1",
+                "exported_at": datetime.now(timezone.utc).isoformat(), "tables": tables}
+
     def replace_requirements(
-        self, partner_name: str, function: str, requirements: list[dict], *, function_source: str = "manual"
+        self, partner_name: str, function: str, requirements: list[dict], *,
+        function_source: str = "manual", expected_revision: str | None = None,
     ) -> list[dict]:
         function = normalize_partner_function(function)
         if function not in FUNCTIONS:
@@ -149,6 +195,23 @@ class SNDStore:
         validated = validate_requirements(requirements)
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            previous = [requirement_record(dict(row)) for row in connection.execute(
+                "SELECT * FROM requirements WHERE partner_key=?", (key,)
+            )]
+            assignment_row = connection.execute(
+                "SELECT function,source FROM partner_functions WHERE partner_key=?", (key,)
+            ).fetchone()
+            assignment = dict(assignment_row) if assignment_row else None
+            if expected_revision is not None and requirements_revision(previous, assignment) != expected_revision:
+                raise SNDConflictError(CONFLICT_MESSAGE)
+            # Archive before replacing in the SAME transaction, including removed rows.
+            connection.execute(
+                "INSERT INTO requirement_history (partner_key,payload_json,archived_at) VALUES (?,?,?)",
+                (key, json.dumps({"requirements": previous, "assignment": assignment},
+                                 ensure_ascii=False), now),
+            )
             old = {
                 row["id"]: row["created_at"] for row in connection.execute(
                     "SELECT id, created_at FROM requirements WHERE partner_key=?", (key,)
@@ -247,13 +310,59 @@ class SNDStore:
         }
 
 
-def get_store():
-    """Use a dedicated writable Sheet when configured, otherwise local SQLite."""
+def parse_sheet_id(value: str | None) -> str | None:
+    """Accept a bare spreadsheet ID or a full Google Sheets URL."""
+    text = (value or "").strip()
+    match = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", text)
+    if match:
+        return match.group(1)
+    return text if re.fullmatch(r"[A-Za-z0-9_-]+", text) else None
+
+
+def reject_source_sheet(sheet_id: str) -> None:
+    """The writable S&D store must never be one of the read-only ESSM sources."""
     from src.google_drive_service import optional_setting
 
-    sheet_id = optional_setting("SND_CONFIG_SHEET_ID")
-    if sheet_id:
+    for setting_name in ("ACTIVE_ESSM_URL", "NATIONAL_SOURCE_URL"):
+        if parse_sheet_id(optional_setting(setting_name)) == sheet_id:
+            raise SNDStoreError("SND_CONFIG_SHEET_ID must be a separate Sheet, not an ESSM or National source.")
+
+
+def get_store():
+    """Fail closed instead of silently creating an ephemeral production database."""
+    from src.google_drive_service import optional_setting
+
+    raw_sheet_id = optional_setting("SND_CONFIG_SHEET_ID")
+    backend = (optional_setting("SND_STORAGE_BACKEND") or "google_sheets").lower()
+    if backend == "google_sheets":
+        if not raw_sheet_id:
+            raise SNDStoreError(
+                "S&D durable storage is not configured. Set SND_CONFIG_SHEET_ID to a dedicated "
+                "Google Sheet shared with the service account as Editor. Saving is unavailable "
+                "until storage is configured; existing local data has not been deleted."
+            )
+        sheet_id = parse_sheet_id(raw_sheet_id)
+        if not sheet_id:
+            raise SNDStoreError("SND_CONFIG_SHEET_ID must be a spreadsheet ID or a Google Sheets URL.")
+        reject_source_sheet(sheet_id)
+        cutover_id = optional_setting("SND_CUTOVER_ID")
+        if not cutover_id:
+            raise SNDStoreError(
+                "S&D storage is connected but the one-time migration has not been verified yet, so "
+                "S&D is read/write disabled to protect existing records. Run the cutover command in "
+                "docs/snd-data-loss-incident.md, then add the returned migration_id as SND_CUTOVER_ID."
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", cutover_id):
+            raise SNDStoreError("SND_CUTOVER_ID is invalid.")
         from src.snd_cloud_store import GoogleSheetsSNDStore
 
-        return GoogleSheetsSNDStore(sheet_id)
-    return SNDStore()
+        return GoogleSheetsSNDStore(sheet_id, expected_cutover_id=cutover_id)
+    if backend == "sqlite":
+        path = optional_setting("SND_DB_PATH")
+        if raw_sheet_id or not path or not Path(path).is_absolute():
+            raise SNDStoreError(
+                "SQLite requires SND_STORAGE_BACKEND=sqlite and an absolute SND_DB_PATH "
+                "on persistent storage, with SND_CONFIG_SHEET_ID unset. Do not use SQLite on Streamlit Cloud."
+            )
+        return SNDStore(path)
+    raise SNDStoreError("SND_STORAGE_BACKEND must be google_sheets or sqlite.")

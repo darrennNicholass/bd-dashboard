@@ -176,6 +176,30 @@ MEMBER_PASSWORD = "your-password"
 
 Google Service Account credentials should also be configured securely through Streamlit Secrets.
 
+S&D manual entries require a **separate writable Google Sheet** on Streamlit
+Community Cloud. Configure these top-level secrets and share that Sheet with the
+service account as Editor:
+
+```toml
+SND_STORAGE_BACKEND = "google_sheets"
+SND_CONFIG_SHEET_ID = "your-dedicated-spreadsheet-id"
+SND_CUTOVER_ID = "verified-id-returned-by-the-cutover-command"
+```
+
+Drive proof access alone does not persist manual entries. Missing S&D storage
+configuration or a verified migration receipt disables saving instead of creating
+a temporary or empty production store. The one-time `python -m src.snd_backup cutover
+... --apply` initializes a completely empty spreadsheet with an `SND_Config` worksheet
+and the headers `partner_key`, `payload_json`, and `updated_at` (other worksheets are
+not changed), then returns the `SND_CUTOVER_ID`. `SND_CONFIG_SHEET_ID` accepts the
+spreadsheet ID or its full URL.
+For local development only, explicitly select `sqlite` and set an absolute
+`SND_DB_PATH` on a persistent disk, with `SND_CONFIG_SHEET_ID` unset.
+
+See [the S&D incident report and recovery instructions](docs/snd-data-loss-incident.md)
+before restarting an existing deployment. The member-only **All saved requirements
+& backup** panel includes inactive partners and a downloadable history backup.
+
 > Never commit `secrets.toml`, API credentials, passwords, or private Google Sheets URLs to GitHub.
 
 ### 5. Run the dashboard

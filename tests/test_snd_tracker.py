@@ -84,21 +84,23 @@ class StoreTests(unittest.TestCase):
 
 class CloudStoreTests(unittest.TestCase):
     def test_configured_sheet_selects_durable_backend(self):
-        with patch.dict("os.environ", {"SND_CONFIG_SHEET_ID": "demo-sheet"}):
+        with patch.dict("os.environ", {"SND_CONFIG_SHEET_ID": "demo-sheet",
+                                        "SND_CUTOVER_ID": "verified-cutover"}):
             self.assertIsInstance(get_store(), GoogleSheetsSNDStore)
 
     def test_sheet_round_trip_and_isolated_partner_rows(self):
         class FakeWorksheet:
             def __init__(self):
                 self.values = []
-            def get_all_values(self):
+            def get_all_values(self, **kwargs):
                 return [list(row) for row in self.values]
             def update(self, range_name, values, value_input_option):
                 row = int(range_name.split(":")[0][1:]) - 1
                 while len(self.values) <= row:
                     self.values.append([])
                 self.values[row] = list(values[0])
-            def append_row(self, values, value_input_option):
+            def append_row(self, values, value_input_option, insert_data_option):
+                assert insert_data_option == "INSERT_ROWS"
                 self.values.append(list(values))
 
         class FakeSpreadsheet:
@@ -121,7 +123,7 @@ class CloudStoreTests(unittest.TestCase):
         self.assertEqual(reopened.list_requirements("Mandaya")[0]["name"], "Instagram Story")
         self.assertEqual(reopened.get_invoice_exceptions()["mandaya"], "In-Kind")
         self.assertEqual(reopened.get_partner_functions()["another"], "SS")
-        self.assertEqual(len(book.tab.values), 3)
+        self.assertEqual(len(book.tab.values), 4)  # Header plus three immutable changes.
         with self.assertRaises(ValueError):
             reopened.replace_requirements("Mandaya", "ELDs", [])
         self.assertEqual(GoogleSheetsSNDStore("config", spreadsheet=book).requirement_counts()["mandaya"], 1)

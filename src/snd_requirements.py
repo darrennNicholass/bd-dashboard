@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from uuid import uuid4
+from hashlib import sha256
+import json
 
 from src.preparation import clean_text
 
@@ -9,6 +11,13 @@ REQUIREMENT_FIELDS = (
     "id", "partner_key", "partner_name", "kind", "name", "quantity",
     "created_at", "updated_at",
 )
+
+
+def requirements_revision(requirements: list[dict], assignment: dict | None) -> str:
+    """Version of the saved editor baseline, independent of proof/invoice changes."""
+    rows = sorted((requirement_record(row) for row in requirements), key=lambda row: row["id"])
+    return sha256(json.dumps([rows, assignment or {}], sort_keys=True,
+                             ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def requirement_record(item: dict) -> dict:
