@@ -276,6 +276,18 @@ def _open_spreadsheet(sheet_id: str):
     return client.open_by_key(sheet_id)
 
 
+def _blank_grid(values: list[list[str]]) -> bool:
+    """True when a worksheet holds no content at all.
+
+    The real Sheets API reports a freshly created or fully cleared worksheet as
+    ``[[]]`` (one empty row), and sometimes as several empty rows, not ``[]``.
+    Testing ``not values`` alone makes an empty grid look like existing data,
+    which blocks initialization and reports a misleading "already contains
+    data" error.
+    """
+    return not any(any(str(cell).strip() for cell in row) for row in values)
+
+
 class GoogleSheetsSNDStore:
     """Append changes to a dedicated Sheet; old rows remain recoverable.
 
@@ -411,7 +423,7 @@ class GoogleSheetsSNDStore:
                 return []
             raise SNDStoreError(NOT_INITIALIZED_MESSAGE)
         values = self._read_values(tab, force=force)
-        if not values:
+        if _blank_grid(values):
             if self.read_only:
                 return []
             if not create:
@@ -432,7 +444,7 @@ class GoogleSheetsSNDStore:
             # Recheck immediately before the only initialization write. This
             # also sees formulas whose displayed result is an empty string.
             values = read()
-            if not values:
+            if _blank_grid(values):
                 # Append is non-overwriting. If a person adds content after our
                 # blank read, the header lands below it and validation fails
                 # while preserving that content.
@@ -445,7 +457,7 @@ class GoogleSheetsSNDStore:
                 values = read()
             except Exception:
                 values = []
-            if not values:
+            if _blank_grid(values):
                 raise SNDStoreError(
                     "SND_Config is blank but its header could not be initialized. "
                     "No existing data was overwritten."

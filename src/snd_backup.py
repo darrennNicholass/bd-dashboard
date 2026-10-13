@@ -575,7 +575,14 @@ def main() -> None:
                 receipt_path = args.artifacts_dir / f"snd-cutover-receipt-{timestamp}-{migration_id}.json"
                 write_json_exclusive(receipt_path, result)
             else:
-                result["dry_run"] = "No destination changes were made. Re-run with --apply to migrate."
+                # The ID exists only to name this run's artifacts. No receipt was
+                # written, so it can never unlock production; say so explicitly.
+                result["migration_id_is_provisional"] = True
+                result["dry_run"] = (
+                    "No destination changes were made. Re-run with --apply to migrate. "
+                    "Do NOT use this migration_id as SND_CUTOVER_ID: only a cutover receipt "
+                    "written by --apply, with ready_for_production_switch true, is valid."
+                )
             print(json.dumps(result))
     except SNDStoreError as exc:
         parser.exit(1, f"{exc}\n")

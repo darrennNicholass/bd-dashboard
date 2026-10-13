@@ -19,19 +19,34 @@ from uuid import uuid4
 import gspread
 
 from src import snd_backup, snd_cloud_store
-from src.snd_backup import preflight, read_sqlite_snapshot, snapshot_partners, verified_cutover_partners
+from src.snd_backup import (
+    merge_partner_sources, preflight, read_sqlite_snapshot, snapshot_partners,
+    verified_cutover_partners,
+)
 from src.snd_cloud_store import GoogleSheetsSNDStore, SHEETS_API_DISABLED, TAB, _reason
 from src.snd_store import (
     SNDStore, SNDStoreError, clean_setting, get_store, parse_sheet_id, sheet_id_hint,
 )
-from tests.fake_sheets import FakeBook
+from tests.fake_sheets import FakeBook, FakeWorksheet
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = Path(__file__).resolve().parent
 REAL_SOURCE = ROOT / ".local" / "snd_tracker.sqlite3"
+# Recovered from the deployed container's legacy rescue panel on October 13.
+LEGACY_SOURCE = ROOT / ".local" / "incident-backups" / "snd-legacy-659134155cd6.sqlite3"
 # Synthetic 44-character ID with the same shape as a real one. The production
 # spreadsheet ID is configuration, not test data, and is never committed.
 SHEET = "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-aBcD"
+
+
+class TempFilesMixin:
+    """Temporary paths under tests/, removed even if a test fails."""
+
+    def temp_path(self, suffix=".sqlite3"):
+        path = TESTS / f".tmp_recovery_{uuid4().hex}{suffix}"
+        self.addCleanup(lambda: shutil.rmtree(path, ignore_errors=True) if path.is_dir()
+                        else path.unlink(missing_ok=True))
+        return path
 
 
 def req(uid="r1", name="Broadcast", quantity=1, kind="supply"):
@@ -448,6 +463,207 @@ class RecoveredSourceCutoverTests(unittest.TestCase):
         # FakeWorksheet.update/clear raise on call, so reaching here proves the
         # whole create/edit/delete cycle only ever appended rows.
         self.assertGreater(len(book.config.values), 1)
+
+
+class RealisticWorksheet(FakeWorksheet):
+    """Mirrors the live Sheets API: an empty grid reads back as [[]], not []."""
+
+    def get_all_values(self, **kwargs):
+        return super().get_all_values(**kwargs) or [[]]
+
+
+class RealisticBook(FakeBook):
+    """FakeBook whose worksheets report emptiness the way Google really does."""
+
+    def __init__(self, *, blank_config_tab=False):
+        super().__init__()
+        self.tabs = {"Sheet1": RealisticWorksheet("Sheet1", [["keep me"]])}
+        if blank_config_tab:
+            self.tabs[TAB] = RealisticWorksheet(TAB)
+
+    def add_worksheet(self, title, rows, cols):
+        with self.lock:
+            if title in self.tabs:
+                raise RuntimeError("duplicate title")
+            self.created += 1
+            self.tabs[title] = RealisticWorksheet(title)
+            return self.tabs[title]
+
+
+class EmptyGridInitializationTests(unittest.TestCase):
+    """October 13 defect: a brand-new or cleared worksheet reads back as [[]].
+    Treating that as existing data aborted the production cutover."""
+
+    def test_blank_grid_recognizes_every_shape_the_api_returns(self):
+        for values in ([], [[]], [[], []], [["", "   "]], [["", ""], [""]]):
+            with self.subTest(values=values):
+                self.assertTrue(snd_cloud_store._blank_grid(values))
+        for values in ([["x"]], [[""], ["x"]], [["0"]], [["", "y"]]):
+            with self.subTest(values=values):
+                self.assertFalse(snd_cloud_store._blank_grid(values))
+
+    def partners(self):
+        return {"demo": {"partner_name": "Demo", "function": "EwAs",
+                         "function_source": "manual", "requirements": [req()]}}
+
+    def test_cutover_initializes_a_newly_created_worksheet(self):
+        book = RealisticBook()
+        receipt = migrate(book, self.partners(), migration_id="cut-empty")
+        self.assertTrue(receipt["ready_for_production_switch"])
+        self.assertEqual(book.config.values[0], snd_cloud_store.HEADER)
+        self.assertEqual(production(book, "cut-empty").requirement_counts(), {"demo": 1})
+        self.assertEqual(book.tabs["Sheet1"].values, [["keep me"]])  # Untouched.
+
+    def test_cutover_initializes_a_preexisting_blank_worksheet(self):
+        book = RealisticBook(blank_config_tab=True)
+        receipt = migrate(book, self.partners(), migration_id="cut-blank")
+        self.assertTrue(receipt["ready_for_production_switch"])
+        self.assertEqual(book.config.values[0], snd_cloud_store.HEADER)
+        self.assertEqual(book.created, 0, "the existing worksheet must be reused")
+        self.assertEqual(production(book, "cut-blank").requirement_counts(), {"demo": 1})
+
+    def test_read_only_store_sees_a_blank_grid_as_uninitialized_without_writing(self):
+        book = RealisticBook(blank_config_tab=True)
+        store = GoogleSheetsSNDStore("ro", spreadsheet=book, read_only=True)
+        self.assertEqual(store.export_snapshot(refresh=True)["rows"], [])
+        self.assertFalse(store.diagnostics()["worksheet_initialized"])
+        self.assertEqual(book.writes(), 0)
+
+    def test_production_still_refuses_to_initialize_a_blank_worksheet(self):
+        book = RealisticBook(blank_config_tab=True)
+        with self.assertRaisesRegex(SNDStoreError, "has not passed the verified migration"):
+            production(book, "cut-x").requirement_counts()
+        self.assertEqual(book.writes(), 0)
+
+    def test_worksheet_holding_real_content_is_still_refused(self):
+        book = RealisticBook()
+        book.tabs[TAB] = RealisticWorksheet(TAB, [["unexpected", "content", "here"]])
+        with self.assertRaisesRegex(SNDStoreError, "already contains data or an incompatible header"):
+            migrate(book, self.partners(), migration_id="cut-dirty")
+        self.assertEqual(book.config.values, [["unexpected", "content", "here"]])
+
+
+class ComplementaryMergeTests(TempFilesMixin, unittest.TestCase):
+    """The October 12 recovery shape: the Cloud database holds requirements and
+    Functions, the local database holds invoice exceptions for some of the same
+    partners. Neither may erase the other."""
+
+    def run_cli(self, *args):
+        output = io.StringIO()
+        with patch.object(sys, "argv", ["snd_backup", *args]), redirect_stdout(output):
+            snd_backup.main()
+        return json.loads(output.getvalue())
+
+    def build_sources(self):
+        """cloud: 1 shared + 1 unique partner with requirements (newer).
+        local: the same shared partner with only an invoice exception (older)."""
+        cloud, local = self.temp_path(), self.temp_path()
+        cloud_store, local_store = SNDStore(cloud), SNDStore(local)
+        cloud_store.replace_requirements("Shared Partner", "EwAs",
+                                         [req("c1", "Logo Placement", 2), req("c2", "Instagram Story", 3)])
+        cloud_store.replace_requirements("Cloud Only", "EwAs", [req("c3", "Boothing", 1)])
+        local_store.set_invoice_exception("Shared Partner", "In-Kind")
+        local_store.set_invoice_exception("Local Only", "No Membership")
+        return cloud, local
+
+    def test_requirements_and_invoice_exceptions_both_survive_the_merge(self):
+        cloud, local = self.build_sources()
+        sources = [snapshot_partners(read_sqlite_snapshot(path)) for path in (cloud, local)]
+        merged, report = merge_partner_sources(sources)
+        # Order must not change the outcome.
+        self.assertEqual(merge_partner_sources(list(reversed(sources)))[0], merged)
+        self.assertEqual(report["superseded_values"], 0, "nothing should be discarded")
+        self.assertEqual(set(merged), {"shared partner", "cloud only", "local only"})
+
+        shared = merged["shared partner"]
+        self.assertEqual(shared["function"], "EwAs")
+        self.assertEqual(len(shared["requirements"]), 2)
+        self.assertEqual(shared["invoice_exception"], "In-Kind")
+        self.assertEqual(merged["local only"]["invoice_exception"], "No Membership")
+        self.assertNotIn("requirements", merged["local only"])
+
+        book = FakeBook()
+        receipt = migrate(book, merged, migration_id="cut-merged")
+        self.assertTrue(receipt["ready_for_production_switch"])
+        view = production(book, "cut-merged")
+        # An invoice-only partner is a real row, so it reports zero requirements.
+        self.assertEqual(view.requirement_counts(),
+                         {"shared partner": 2, "cloud only": 1, "local only": 0})
+        self.assertEqual(view.get_invoice_exceptions(),
+                         {"shared partner": "In-Kind", "local only": "No Membership"})
+        self.assertEqual(view.get_partner_functions(),
+                         {"shared partner": "EwAs", "cloud only": "EwAs"})
+
+    def test_dry_run_marks_its_migration_id_provisional_and_writes_nothing(self):
+        cloud, local = self.build_sources()
+        artifacts = self.temp_path("")
+        book = FakeBook()
+        sheet_id = f"prov-{uuid4().hex}"
+        self.addCleanup(snd_cloud_store._SHARED.pop, sheet_id, None)
+        with patch.object(snd_cloud_store, "_open_spreadsheet", return_value=book):
+            dry = self.run_cli("cutover", "--sqlite", str(cloud), "--sqlite", str(local),
+                               "--sheet-id", sheet_id, "--artifacts-dir", str(artifacts))
+        self.assertEqual(book.writes(), 0)
+        self.assertTrue(dry["migration_id_is_provisional"])
+        self.assertFalse(dry["ready_for_production_switch"])
+        self.assertIn("Do NOT use this migration_id as SND_CUTOVER_ID", dry["dry_run"])
+        # The provisional ID must not unlock production, even by accident.
+        with patch.object(snd_cloud_store, "_open_spreadsheet", return_value=book):
+            with self.assertRaisesRegex(SNDStoreError, "verified migration"):
+                production(book, dry["migration_id"]).requirement_counts()
+        # Every source was checksummed and backed up before any destination access.
+        manifests = sorted(path.name for path in artifacts.iterdir()
+                           if path.name.endswith(".manifest.json"))
+        self.assertEqual(len(manifests), 2)
+        self.assertEqual(len(dry["source_backup_sha256s"]), 2)
+
+    def test_equal_timestamps_with_different_requirements_stop_the_merge(self):
+        stamp = "2026-10-12T09:00:00+00:00"
+        left = {"demo": {"partner_name": "Demo", "function": "EwAs",
+                         "requirements": [{**req("x1", "A"), "updated_at": stamp}]}}
+        right = {"demo": {"partner_name": "Demo", "function": "EwAs",
+                          "requirements": [{**req("x1", "B"), "updated_at": stamp}]}}
+        with self.assertRaisesRegex(SNDStoreError, "review the source backups manually"):
+            merge_partner_sources([left, right])
+
+
+@unittest.skipUnless(LEGACY_SOURCE.is_file(), "recovered legacy Cloud database is not present")
+class RecoveredLegacyCloudTests(unittest.TestCase):
+    """Guards the real two-source recovery totals discovered on October 13."""
+
+    def test_legacy_and_local_merge_is_additive_and_order_independent(self):
+        legacy = snapshot_partners(read_sqlite_snapshot(LEGACY_SOURCE))
+        local = snapshot_partners(read_sqlite_snapshot(REAL_SOURCE))
+        merged, report = merge_partner_sources([legacy, local])
+        reversed_merge, _ = merge_partner_sources([local, legacy])
+        self.assertEqual(merged, reversed_merge)
+        self.assertEqual(report["superseded_values"], 0)
+
+        # Additive: every requirement ID from both sources survives exactly once.
+        def ids(source):
+            return [(key, row["id"]) for key, data in source.items()
+                    for row in data.get("requirements", [])]
+
+        merged_ids = ids(merged)
+        self.assertEqual(len(merged_ids), len(set(merged_ids)), "no duplicated requirements")
+        self.assertEqual(set(ids(legacy)) | set(ids(local)), set(merged_ids))
+        self.assertEqual(len(merged), len(set(legacy) | set(local)))
+        self.assertEqual(
+            sum(1 for data in merged.values() if data.get("invoice_exception")),
+            sum(1 for data in local.values() if data.get("invoice_exception")))
+
+    def test_merged_payload_passes_validation_before_any_remote_write(self):
+        legacy = snapshot_partners(read_sqlite_snapshot(LEGACY_SOURCE))
+        local = snapshot_partners(read_sqlite_snapshot(REAL_SOURCE))
+        merged, _ = merge_partner_sources([legacy, local])
+        snd_backup._validate_partner_payloads(merged)  # Must not raise.
+        book = FakeBook()
+        receipt = migrate(book, merged, migration_id="cut-real-merged")
+        self.assertTrue(receipt["ready_for_production_switch"])
+        view = production(book, "cut-real-merged")
+        self.assertEqual(len(view.partner_snapshots()), len(merged))
+        self.assertEqual(sum(view.requirement_counts().values()),
+                         sum(len(d.get("requirements", [])) for d in merged.values()))
 
 
 class UnrelatedRegressionTests(unittest.TestCase):

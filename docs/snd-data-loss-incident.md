@@ -105,6 +105,83 @@ runtime files, and deployment logs are not available from this workspace.
     while the previous version's Cloud SQLite file still exists, with `.sqlite3` and
     `.json` downloads. It works even while S&D storage is disabled.
 
+## October 13 — recovery completed and migrated
+
+### The October 12 data was recovered from the deployed container
+
+The member-only legacy rescue panel was still available and produced
+`.local/incident-backups/snd-legacy-659134155cd6.sqlite3`
+(sha256 `659134155cd6…`, 69,632 bytes). It holds **14 partners, 81 requirements,
+14 Function assignments, 0 invoice exceptions, 2 proof checks**, every timestamp
+inside 2026-10-12 08:39:22Z → 12:49:51Z. That is the work the incident lost.
+
+This also resolves the two different dry-run totals: 30 partners / 84
+requirements is both recovered databases merged, 22 / 3 is the local one alone.
+Eleven artifacts reduce to exactly two logical datasets:
+
+| Projection | Content | Artifacts |
+| --- | --- | --- |
+| `2607b108…` | 14 partners / 81 requirements (Cloud, Oct 12) | `snd-legacy-659134155cd6.sqlite3`, its `.json`, `snd-source-…913bd784…-1.json` |
+| `a18453e8…` | 22 partners / 3 requirements (local, Oct 4–7) | `.local/snd_tracker.sqlite3`, `20261012T125642990303Z/snd_tracker.sqlite3`, `recovery-snapshot-v1.json`, `pre-google-cutover-20261012-v2.json`, `pre-google-cutover-20261013T073740Z.json`, `snd-source-…913bd784…-2.json`, `snd-source-…98565ab2…-1.json` |
+
+The two sources are **complementary, not conflicting**: the Cloud database has
+requirements and Functions but no invoice exceptions; the local database has the
+invoice exceptions and almost no requirements. `merge_partner_sources` chooses
+the configuration and the invoice exception independently per partner, so the
+merge is purely additive — `superseded_values: 0`, no superseded source for any
+partner, identical result in either `--sqlite` order
+(`source_state_sha256 8e1993e1baca4458…`), and no requirement ID dropped.
+Merge decisions: 14 partners invoice-only from local, 8 config-only from Cloud,
+4 config from Cloud + invoice from local, 2 config+check from local,
+2 config+check from Cloud + invoice from local = 30.
+
+**October 11 has no records in any source.** The Cloud database's earliest
+timestamp is 2026-10-12T08:39:22Z. Either nothing was saved on October 11, or it
+was already gone before the rescue download; this cannot be distinguished from
+the available evidence.
+
+### Defect found during the production cutover: an empty grid reads as `[[]]`
+
+The first `--apply` aborted fail-closed with "SND_Config already contains data
+or an incompatible header" immediately after it created the worksheet. Cause:
+`initialize()` and `_write_header()` tested blankness with `if not values`, but
+the real Sheets API returns a freshly created or cleared worksheet as `[[]]`
+(one empty row), not `[]`. `[[]]` is truthy, so the header was never written and
+the "never overwrite existing content" guard fired on the worksheet the migration
+had just created. The in-memory test double returned `[]`, so none of the 148
+tests reproduced it. `_blank_grid()` now treats any all-empty grid as blank;
+a worksheet holding real content is still refused, untouched.
+
+### Migration applied and verified
+
+```text
+migration_id                : 308d75b556cd4984b90dacdc004edf8a
+source_partners/requirements: 30 / 84      imported_partners: 30
+superseded_values           : 0
+source_state_sha256         : 8e1993e1baca44587d8ebb13293d8fa26661202f86e903256c8a0545cd914b31
+destination_state_sha256    : 8e1993e1baca44587d8ebb13293d8fa26661202f86e903256c8a0545cd914b31
+ready_for_production_switch : true         verified_at: 2026-10-13T08:58:24Z
+```
+
+Independent read-back in production mode (a fresh store with
+`expected_cutover_id`, the same path `app.py` uses) returned **30 partners,
+84 requirements, 20 invoice exceptions, 16 Function assignments, 4 proof
+checks**, matching the merged sources exactly: identical projection hash, 84
+unique requirement IDs with identical ID sets, no duplicates. The journal is
+1 header + 30 partner events + 1 cutover receipt = 32 rows, no blank-row gap,
+no partner with more than one row. `Sheet1` was not touched. A deliberately
+wrong `SND_CUTOVER_ID` still fails closed. Both source databases are
+byte-identical to before the run (`659134155cd6…`, `33a230d2…`).
+
+`preflight --cutover-id 308d75b5…` reports all six checks `ok` and
+`ready_for_production: true`.
+
+The dry-run `migration_id`s `913bd784…` and `98565ab2…` were never receipts:
+`verified_cutover_partners` returns `ready_for_production_switch: False` and
+exits before any write when `--apply` is absent, and the ID is only a per-run
+`uuid4().hex` used to name artifacts. A dry run now says so explicitly via
+`migration_id_is_provisional`.
+
 ## October 13 update — the blocking fault is a disabled Google Sheets API
 
 The spreadsheet, the sharing, and the Cloud secrets were all correct. The S&D
@@ -243,7 +320,14 @@ project configures no linter or type checker. The cutover was rehearsed again wi
 the **real** `.local/snd_tracker.sqlite3`: the dry run made 0 writes, `--apply`
 imported 22 partners / 3 requirements / 20 invoice exceptions, a second `--apply`
 imported 0 and added only a receipt row, and the source bytes were unchanged.
-**The live migration has not been run** — it is blocked on enabling the Sheets API.
+Validation (October 13, second pass): all **154 tests passed**, adding coverage for
+the complementary two-source merge (requirements and invoice exceptions both
+survive, order-independent), the real recovered legacy+local merge being additive
+and duplicate-free, a dry-run ID being unable to unlock production, and the
+empty-grid initialization defect in every shape the API returns (`[]`, `[[]]`,
+several empty rows, whitespace-only cells) while still refusing a worksheet that
+holds real content. `py_compile` and `git diff --check` passed. The production
+migration was applied and verified against the live spreadsheet; see above.
 
 - No code was deployed and no live Google data was changed during this investigation.
 - Keep `SND_Config` as an application-owned append-only journal. Do not manually
