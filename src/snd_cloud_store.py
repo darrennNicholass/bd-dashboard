@@ -116,18 +116,71 @@ def _normalized(data: dict) -> dict:
     return data
 
 
-def _api_status(exc: BaseException) -> int | None:
-    if isinstance(exc, gspread.exceptions.APIError):
-        try:
-            return int(exc.code)
-        except (TypeError, ValueError):
-            return None
+def _api_error(exc: BaseException) -> gspread.exceptions.APIError | None:
+    """Find the underlying Google API error.
+
+    gspread converts 403/404 into a bare ``PermissionError``/``SpreadsheetNotFound``
+    and drops the message, so the actionable Google payload only survives on the
+    ``__cause__``/``__context__`` chain. Without this, a project-level
+    "Sheets API disabled" fault is indistinguishable from a sharing mistake.
+    """
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, gspread.exceptions.APIError):
+            return current
+        current = current.__cause__ or current.__context__
     return None
+
+
+def _api_status(exc: BaseException) -> int | None:
+    error = _api_error(exc)
+    if error is None:
+        return None
+    try:
+        return int(error.code)
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def _api_detail(exc: BaseException) -> tuple[set[str], str]:
+    """Return (reason codes, message) from the Google error payload."""
+    error = _api_error(exc)
+    payload = getattr(error, "error", None)
+    if not isinstance(payload, dict):
+        return set(), ""
+    reasons = {str(payload.get("status") or "")}
+    details = payload.get("details")
+    if isinstance(details, list):
+        for item in details:
+            if isinstance(item, dict) and item.get("reason"):
+                reasons.add(str(item["reason"]))
+    return reasons, str(payload.get("message") or "")
+
+
+SHEETS_API_DISABLED = (
+    "the Google Sheets API is not enabled in the service account's Google Cloud project. "
+    "Sharing the spreadsheet is not enough: enable \"Google Sheets API\" for that project, "
+    "wait about a minute, then retry"
+)
+
+
+def _sheets_api_disabled(exc: BaseException) -> bool:
+    """A disabled API returns 403 like a sharing error but needs a different fix."""
+    if _api_status(exc) != 403:
+        return False
+    reasons, message = _api_detail(exc)
+    return ("SERVICE_DISABLED" in reasons
+            or "has not been used in project" in message
+            or "is disabled" in message)
 
 
 def _reason(exc: BaseException) -> str:
     """Actionable description of a Sheets failure without IDs, URLs, or credentials."""
     status = _api_status(exc)
+    if _sheets_api_disabled(exc):
+        return SHEETS_API_DISABLED
     if isinstance(exc, gspread.exceptions.SpreadsheetNotFound) or status == 404:
         return "the spreadsheet was not found; check SND_CONFIG_SHEET_ID"
     if isinstance(exc, PermissionError) or status == 403:
@@ -605,6 +658,41 @@ class GoogleSheetsSNDStore:
     def partner_snapshots(self, *, refresh: bool = False) -> dict[str, dict]:
         """Return the complete current projection for migration verification."""
         return {key: copy.deepcopy(data) for key, (_, data) in self._load(refresh=refresh).items()}
+
+    def diagnostics(self, *, refresh: bool = True) -> dict:
+        """Safe, read-only state of the destination for configuration checks.
+
+        Contains no partner names, IDs, URLs, or credentials. Used by
+        ``python -m src.snd_backup preflight`` so the production gate can be
+        reproduced without changing anything.
+        """
+        rows = self._load(refresh=refresh)
+        journal = self._journal_rows
+        kinds = {"legacy_snapshot": 0, "event": 0, "cutover_receipt": 0, "header": 0}
+        for row in journal[1:] if journal else []:
+            if not row or not any(str(cell).strip() for cell in row):
+                continue
+            if row[:3] == HEADER:
+                kinds["header"] += 1
+            elif row[0] == CUTOVER_KEY:
+                kinds["cutover_receipt"] += 1
+            else:
+                try:
+                    kinds["event" if EVENT_MARKER in json.loads(row[1]) else "legacy_snapshot"] += 1
+                except (ValueError, IndexError, TypeError):
+                    kinds["legacy_snapshot"] += 1
+        return {
+            "worksheet_initialized": bool(journal),
+            "journal_rows": max(len(journal) - 1, 0),
+            "row_kinds": kinds,
+            "blank_row_gap": self._has_gap,
+            "partners": len(rows),
+            "requirements": sum(len(data.get("requirements", [])) for _, data in rows.values()),
+            "invoice_exceptions": sum(1 for _, data in rows.values() if data.get("invoice_exception")),
+            "checks": sum(1 for _, data in rows.values() if data.get("check")),
+            "verified_cutover_ids": sorted(self._cutover_receipts),
+            "projection_sha256": projection_sha256({key: data for key, (_, data) in rows.items()}),
+        }
 
     def record_cutover(self, receipt: dict) -> dict:
         """Append a verified migration receipt and confirm it can be read back."""

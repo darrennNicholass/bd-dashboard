@@ -310,13 +310,57 @@ class SNDStore:
         }
 
 
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
+_WRAPPERS = "'\"`<>()[]{} \t\r\n\u00a0"
+# A published-to-web link exposes a different identifier that the API cannot open.
+_PUBLISHED_URL = re.compile(r"/spreadsheets(?:/u/\d+)?/d/e/", re.IGNORECASE)
+_SHEET_URL = re.compile(r"/spreadsheets(?:/u/\d+)?/d/(?!e/)([A-Za-z0-9_-]+)", re.IGNORECASE)
+_QUERY_ID = re.compile(r"[?&#](?:id|key)=([A-Za-z0-9_-]+)")
+
+
+def clean_setting(value: str | None) -> str:
+    """Strip invisible characters and wrapping punctuation left by copy/paste."""
+    return str(value or "").translate(_INVISIBLE).strip(_WRAPPERS)
+
+
 def parse_sheet_id(value: str | None) -> str | None:
-    """Accept a bare spreadsheet ID or a full Google Sheets URL."""
-    text = (value or "").strip()
-    match = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", text)
+    """Accept a bare spreadsheet ID or a full Google Sheets URL.
+
+    Tolerates surrounding whitespace, quotes or angle brackets added by pasting,
+    `/u/0/` account prefixes, and any `?query`/`#fragment`. A published
+    `/d/e/<token>/pubhtml` link is rejected: that token is not a spreadsheet ID.
+    """
+    text = clean_setting(value)
+    if not text:
+        return None
+    match = _SHEET_URL.search(text)
+    if match:
+        return match.group(1)
+    if _PUBLISHED_URL.search(text):
+        return None
+    match = _QUERY_ID.search(text)
     if match:
         return match.group(1)
     return text if re.fullmatch(r"[A-Za-z0-9_-]+", text) else None
+
+
+def sheet_id_hint(value: str | None) -> str:
+    """Non-sensitive description of an unparseable value, for error messages."""
+    text = clean_setting(value)
+    if not text:
+        return "the value is empty after trimming quotes and whitespace"
+    if _PUBLISHED_URL.search(text):
+        return ("it is a published-to-web link (/d/e/...); open the spreadsheet and copy the "
+                "normal /spreadsheets/d/<ID>/edit address instead")
+    if "drive.google.com" in text.casefold() and "/folders/" in text.casefold():
+        return "it is a Drive folder link, not a spreadsheet link"
+    if "docs.google.com" in text.casefold() or text.casefold().startswith("http"):
+        return "it looks like a URL but contains no /spreadsheets/d/<ID> path"
+    invalid = sorted({character for character in text if not re.fullmatch(r"[A-Za-z0-9_-]", character)})
+    if invalid:
+        return (f"it is {len(text)} characters long and contains "
+                f"{len(invalid)} character type(s) that a spreadsheet ID never has")
+    return f"it is {len(text)} characters long"
 
 
 def reject_source_sheet(sheet_id: str) -> None:
@@ -333,9 +377,9 @@ def get_store():
     from src.google_drive_service import optional_setting
 
     raw_sheet_id = optional_setting("SND_CONFIG_SHEET_ID")
-    backend = (optional_setting("SND_STORAGE_BACKEND") or "google_sheets").lower()
+    backend = clean_setting(optional_setting("SND_STORAGE_BACKEND")).lower() or "google_sheets"
     if backend == "google_sheets":
-        if not raw_sheet_id:
+        if not clean_setting(raw_sheet_id):
             raise SNDStoreError(
                 "S&D durable storage is not configured. Set SND_CONFIG_SHEET_ID to a dedicated "
                 "Google Sheet shared with the service account as Editor. Saving is unavailable "
@@ -343,9 +387,13 @@ def get_store():
             )
         sheet_id = parse_sheet_id(raw_sheet_id)
         if not sheet_id:
-            raise SNDStoreError("SND_CONFIG_SHEET_ID must be a spreadsheet ID or a Google Sheets URL.")
+            raise SNDStoreError(
+                "SND_CONFIG_SHEET_ID must be a spreadsheet ID or a Google Sheets URL: "
+                f"{sheet_id_hint(raw_sheet_id)}. Paste either the bare ID or the full "
+                "https://docs.google.com/spreadsheets/d/<ID>/edit address of the dedicated S&D sheet."
+            )
         reject_source_sheet(sheet_id)
-        cutover_id = optional_setting("SND_CUTOVER_ID")
+        cutover_id = clean_setting(optional_setting("SND_CUTOVER_ID"))
         if not cutover_id:
             raise SNDStoreError(
                 "S&D storage is connected but the one-time migration has not been verified yet, so "
@@ -353,13 +401,16 @@ def get_store():
                 "docs/snd-data-loss-incident.md, then add the returned migration_id as SND_CUTOVER_ID."
             )
         if not re.fullmatch(r"[A-Za-z0-9_-]+", cutover_id):
-            raise SNDStoreError("SND_CUTOVER_ID is invalid.")
+            raise SNDStoreError(
+                "SND_CUTOVER_ID is invalid. Use the exact migration_id value printed by "
+                "`python -m src.snd_backup cutover ... --apply`, without quotes or extra characters."
+            )
         from src.snd_cloud_store import GoogleSheetsSNDStore
 
         return GoogleSheetsSNDStore(sheet_id, expected_cutover_id=cutover_id)
     if backend == "sqlite":
         path = optional_setting("SND_DB_PATH")
-        if raw_sheet_id or not path or not Path(path).is_absolute():
+        if clean_setting(raw_sheet_id) or not path or not Path(path).is_absolute():
             raise SNDStoreError(
                 "SQLite requires SND_STORAGE_BACKEND=sqlite and an absolute SND_DB_PATH "
                 "on persistent storage, with SND_CONFIG_SHEET_ID unset. Do not use SQLite on Streamlit Cloud."

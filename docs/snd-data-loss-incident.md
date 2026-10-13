@@ -105,6 +105,82 @@ runtime files, and deployment logs are not available from this workspace.
     while the previous version's Cloud SQLite file still exists, with `.sqlite3` and
     `.json` downloads. It works even while S&D storage is disabled.
 
+## October 13 update — the blocking fault is a disabled Google Sheets API
+
+The spreadsheet, the sharing, and the Cloud secrets were all correct. The S&D
+store still could not be reached because **the Google Sheets API is not enabled
+in the service account's Google Cloud project**. Only the Drive API had ever been
+enabled, which is why proof scanning worked while every Sheets call failed.
+Verified from this workspace with the real service account:
+
+```text
+REST GET https://sheets.googleapis.com/v4/spreadsheets/<S&D sheet id>
+403 PERMISSION_DENIED  reason: SERVICE_DISABLED
+"Google Sheets API has not been used in project <project number> before or it is disabled."
+```
+
+The same identity cannot read or change API enablement
+(`serviceusage.services.get` returns 403), so only a project owner can fix it in
+the Google Cloud console. Nothing about the spreadsheet needs to change.
+
+Why this was not obvious: gspread converts any 403 into a bare `PermissionError`
+and discards the Google payload, and `_reason()` mapped every 403 to "share the
+spreadsheet with it as Editor". A project-level outage was therefore displayed as
+a sharing mistake. `_api_error()` now walks the `__cause__` chain and
+`_sheets_api_disabled()` detects `SERVICE_DISABLED`, so the real fix is named.
+
+`SND_CONFIG_SHEET_ID must be a spreadsheet ID or a Google Sheets URL` is a
+separate, earlier failure. `parse_sheet_id` now also tolerates wrapping quotes
+and angle brackets, invisible characters (BOM, zero-width, non-breaking space),
+`/spreadsheets/u/0/d/<ID>` account prefixes and `?id=` links, and it explicitly
+rejects a published `/spreadsheets/d/e/<token>/pubhtml` link because that token is
+not a spreadsheet ID. The rejection message now says which of those applied
+without echoing the value. `SND_CUTOVER_ID` and `SND_STORAGE_BACKEND` are cleaned
+the same way, so a pasted `"quoted"` secret no longer reads as invalid.
+
+### Reconciliation of every local recovery source (October 13, read-only)
+
+All four importable artifacts contain **identical** records — same canonical
+projection `a18453e8927ddc047de43564cfe3a911e93155b65e475c2e5513f02500a58c3c`:
+22 partners, 3 requirements, 2 Function assignments, 20 invoice exceptions,
+2 proof checks, saved between 2026-10-04T13:19:53Z and 2026-10-07T17:27:42Z.
+
+| Artifact | Importable | Records |
+| --- | --- | --- |
+| `.local/snd_tracker.sqlite3` | yes (`--sqlite`) | 22 partners / 3 requirements |
+| `.local/incident-backups/20261012T125642990303Z/snd_tracker.sqlite3` | yes (`--sqlite`) | identical |
+| `.local/incident-backups/pre-google-cutover-20261012-v2.json` | `snd-sqlite-snapshot-v1` (`migrate --snapshot`) | identical |
+| `.local/incident-backups/recovery-snapshot-v1.json` | `snd-sqlite-snapshot-v1` | identical |
+| `...-v2.json.manifest.json` | no — manifest only | n/a |
+| `20261012T125642990303Z/snapshot.json` | no — raw table dump, no `format` key | n/a |
+
+No artifact holds a record the others lack, and no two artifacts disagree about
+any partner. **One `--sqlite` source is therefore sufficient**; the merge path and
+its "newest saved value wins" rule have nothing to resolve. The two SQLite files
+differ only in file hash (SQLite page layout), not in content. Nothing anywhere
+contains the October 11–12 entries, so those can only come from the live
+container file via the legacy rescue panel, or be re-entered by hand.
+
+### Revised step order
+
+0. **Enable the Google Sheets API** for the service account's Google Cloud project
+   at <https://console.cloud.google.com/apis/library/sheets.googleapis.com>
+   (select the project named in the `preflight` output), wait about a minute, then
+   confirm with the new read-only check:
+
+   ```powershell
+   .venv\Scripts\python.exe -m src.snd_backup preflight --sheet-id "<S&D sheet URL or ID>"
+   ```
+
+   It exits non-zero and names the blocking action until storage is genuinely
+   ready. It never writes, never creates a worksheet, and prints no credentials.
+   Steps 1–6 below cannot succeed before this is done.
+
+Then continue with the steps below. After `--apply`, re-run `preflight` with
+`--cutover-id <migration_id>` to confirm the receipt satisfies the production
+gate before you add the secret, and again with no flag afterwards to confirm the
+deployed `SND_CUTOVER_ID` resolves.
+
 ## Recovery and rollout — order matters
 
 State on October 12: the dedicated spreadsheet exists, is empty, is shared with the
@@ -157,6 +233,17 @@ the dry run made 0 writes, `--apply` imported 22 partners (3 requirements, 20 in
 exceptions) and issued a receipt, and the source file hash was unchanged.
 Google tests use in-memory fakes; the real service-account write and the live
 restart check have not been run.
+
+Validation (October 13 review): all **143 tests passed**, including 25 new tests in
+`tests/test_snd_recovery.py` covering ID/URL parsing, malformed and missing secrets,
+a disabled Sheets API, the absence of any SQLite fallback, read-only dry runs and
+preflight, cutover idempotency, the read/write lock before and after verification,
+and create/edit/delete persistence. `py_compile` and `git diff --check` passed; the
+project configures no linter or type checker. The cutover was rehearsed again with
+the **real** `.local/snd_tracker.sqlite3`: the dry run made 0 writes, `--apply`
+imported 22 partners / 3 requirements / 20 invoice exceptions, a second `--apply`
+imported 0 and added only a receipt row, and the source bytes were unchanged.
+**The live migration has not been run** — it is blocked on enabling the Sheets API.
 
 - No code was deployed and no live Google data was changed during this investigation.
 - Keep `SND_Config` as an application-owned append-only journal. Do not manually

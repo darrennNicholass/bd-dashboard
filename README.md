@@ -177,8 +177,14 @@ MEMBER_PASSWORD = "your-password"
 Google Service Account credentials should also be configured securely through Streamlit Secrets.
 
 S&D manual entries require a **separate writable Google Sheet** on Streamlit
-Community Cloud. Configure these top-level secrets and share that Sheet with the
-service account as Editor:
+Community Cloud. Three things are required, and all three are easy to miss:
+
+1. **Enable the Google Sheets API** in the service account's Google Cloud project
+   (<https://console.cloud.google.com/apis/library/sheets.googleapis.com>).
+   Drive API access alone is not enough: every Sheets call returns
+   `403 SERVICE_DISABLED` while it is off, no matter how the Sheet is shared.
+2. Share that Sheet with the service account as **Editor**.
+3. Configure these top-level secrets:
 
 ```toml
 SND_STORAGE_BACKEND = "google_sheets"
@@ -186,13 +192,24 @@ SND_CONFIG_SHEET_ID = "your-dedicated-spreadsheet-id"
 SND_CUTOVER_ID = "verified-id-returned-by-the-cutover-command"
 ```
 
+Verify all of it at any time with a strictly read-only check that writes nothing
+and prints no credentials:
+
+```bash
+python -m src.snd_backup preflight --sheet-id "<spreadsheet ID or URL>"
+```
+
+It exits non-zero and names the single blocking action until storage is ready.
+
 Drive proof access alone does not persist manual entries. Missing S&D storage
 configuration or a verified migration receipt disables saving instead of creating
 a temporary or empty production store. The one-time `python -m src.snd_backup cutover
 ... --apply` initializes a completely empty spreadsheet with an `SND_Config` worksheet
 and the headers `partner_key`, `payload_json`, and `updated_at` (other worksheets are
 not changed), then returns the `SND_CUTOVER_ID`. `SND_CONFIG_SHEET_ID` accepts the
-spreadsheet ID or its full URL.
+spreadsheet ID or its full URL (including `?gid=`/`#gid=` and `/u/0/` links); a
+published `/d/e/.../pubhtml` link is rejected because that token is not a
+spreadsheet ID.
 For local development only, explicitly select `sqlite` and set an absolute
 `SND_DB_PATH` on a persistent disk, with `SND_CONFIG_SHEET_ID` unset.
 

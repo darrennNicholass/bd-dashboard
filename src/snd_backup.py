@@ -23,8 +23,8 @@ from src.snd_cloud_store import GoogleSheetsSNDStore, PATCH_FIELDS
 from src.snd_requirements import requirement_record
 from src.snd_tracker import compact_check_result
 from src.snd_store import (
-    DEFAULT_DB, FUNCTIONS, INVOICE_REASONS, SNDStoreError, parse_sheet_id, partner_key,
-    reject_source_sheet,
+    DEFAULT_DB, FUNCTIONS, INVOICE_REASONS, SNDStoreError, clean_setting, parse_sheet_id,
+    partner_key, reject_source_sheet, sheet_id_hint,
 )
 
 TABLES = ("requirements", "partner_functions", "invoice_exceptions",
@@ -384,10 +384,89 @@ def legacy_sqlite_backup(path: Path | None = None) -> dict | None:
     return result
 
 
+def preflight(sheet_id: str, *, cutover_id: str | None = None) -> dict:
+    """Strictly read-only check of everything production needs, in failure order.
+
+    Never writes, never creates a worksheet, and never reads secrets into the
+    output. Safe to run repeatedly; it reproduces the exact production gate.
+    """
+    from src.google_drive_service import DriveServiceError, optional_setting, service_account_info
+    from src.snd_cloud_store import SHEETS_API_DISABLED, _reason, _sheets_api_disabled
+
+    report: dict = {"format": "snd-preflight-v1", "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "sheet_id_parsed": True, "checks": [], "ready_for_production": False}
+
+    def record(name: str, ok: bool, detail: str = "") -> bool:
+        report["checks"].append({"check": name, "ok": ok, **({"detail": detail} if detail else {})})
+        return ok
+
+    try:
+        info = service_account_info()
+    except DriveServiceError as exc:
+        record("service_account_configured", False, str(exc))
+        return report
+    record("service_account_configured", True,
+           f"{info.get('client_email', '?')} in project {info.get('project_id', '?')}")
+
+    try:
+        reject_source_sheet(sheet_id)
+    except SNDStoreError as exc:
+        record("destination_is_not_an_essm_source", False, str(exc))
+        return report
+    record("destination_is_not_an_essm_source", True)
+
+    inspector = GoogleSheetsSNDStore(sheet_id, read_only=True)
+    try:
+        diagnostics = inspector.diagnostics()
+    except SNDStoreError as exc:
+        cause = exc.__cause__
+        disabled = cause is not None and _sheets_api_disabled(cause)
+        record("google_sheets_reachable", False, str(exc))
+        if disabled:
+            report["blocking_action"] = (
+                "Enable the Google Sheets API for Google Cloud project "
+                f"{info.get('project_id', '?')}, then rerun this command. " + SHEETS_API_DISABLED
+            )
+        elif cause is not None:
+            report["blocking_action"] = _reason(cause)
+        return report
+    record("google_sheets_reachable", True)
+    report["destination"] = diagnostics
+
+    if not record("worksheet_initialized", diagnostics["worksheet_initialized"],
+                  "" if diagnostics["worksheet_initialized"]
+                  else "SND_Config is absent or blank; run cutover --apply to initialize it"):
+        return report
+    if not record("no_blank_row_gap", not diagnostics["blank_row_gap"],
+                  "" if not diagnostics["blank_row_gap"]
+                  else "delete only the empty row between records (keep every record)"):
+        return report
+
+    configured = clean_setting(cutover_id if cutover_id is not None
+                               else optional_setting("SND_CUTOVER_ID"))
+    report["cutover_id_configured"] = bool(configured)
+    if not configured:
+        record("cutover_id_matches_destination", False,
+               "SND_CUTOVER_ID is not set; copy the migration_id from the cutover receipt")
+        return report
+    # Reproduce the production gate exactly, without writing.
+    try:
+        GoogleSheetsSNDStore(sheet_id, read_only=True,
+                             expected_cutover_id=configured).partner_snapshots(refresh=True)
+    except SNDStoreError as exc:
+        record("cutover_id_matches_destination", False, str(exc))
+        return report
+    record("cutover_id_matches_destination", True)
+    report["ready_for_production"] = True
+    return report
+
+
 def _sheet_id_argument(value: str) -> str:
     sheet_id = parse_sheet_id(value)
     if not sheet_id:
-        raise argparse.ArgumentTypeError("must be a spreadsheet ID or a Google Sheets URL")
+        raise argparse.ArgumentTypeError(
+            f"must be a spreadsheet ID or a Google Sheets URL: {sheet_id_hint(value)}"
+        )
     return sheet_id
 
 
@@ -434,9 +513,21 @@ def main() -> None:
     cutover.add_argument("--artifacts-dir", type=Path, required=True)
     cutover.add_argument("--apply", action="store_true",
                          help="Write to the destination. Without it the run is strictly read-only.")
+    check = sub.add_parser(
+        "preflight", help="Read-only check of storage configuration, access, and cutover state",
+    )
+    check.add_argument("--sheet-id", required=True, type=_sheet_id_argument,
+                       help="Destination spreadsheet ID or URL")
+    check.add_argument("--cutover-id", default=None,
+                       help="Verify a specific migration_id instead of the configured SND_CUTOVER_ID")
     args = parser.parse_args()
     try:
-        if args.command == "export":
+        if args.command == "preflight":
+            report = preflight(args.sheet_id, cutover_id=args.cutover_id)
+            print(json.dumps(report, indent=2))
+            if not report["ready_for_production"]:
+                parser.exit(1)
+        elif args.command == "export":
             snapshot = read_sqlite_snapshot(args.sqlite)
             backup_sha = write_json_exclusive(args.output, snapshot)
             manifest = {
