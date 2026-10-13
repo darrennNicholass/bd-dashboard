@@ -214,8 +214,10 @@ For local development only, explicitly select `sqlite` and set an absolute
 `SND_DB_PATH` on a persistent disk, with `SND_CONFIG_SHEET_ID` unset.
 
 See [the S&D incident report and recovery instructions](docs/snd-data-loss-incident.md)
-before restarting an existing deployment. The member-only **All saved requirements
-& backup** panel includes inactive partners and a downloadable history backup.
+before restarting an existing deployment. The member-only **All saved requirements**
+panel still lists inactive and renamed partners. The operational S&D Tracker page
+deliberately exposes no Legacy Tracker or Backup button; snapshots, backups, and the
+legacy rescue reader stay available through `python -m src.snd_backup`.
 
 > Never commit `secrets.toml`, API credentials, passwords, or private Google Sheets URLs to GitHub.
 

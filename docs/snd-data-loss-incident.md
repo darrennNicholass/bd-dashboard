@@ -74,10 +74,11 @@ runtime files, and deployment logs are not available from this workspace.
 5. The editor retains its original baseline across reruns. If storage or saved
    values change, saving is disabled until the member explicitly reloads the
    saved version. An unsaved draft is not silently applied to a different dataset.
-6. A member-only saved-records view and backup download work even when no active
-   partner matches. A backend label and non-secret storage fingerprint help detect
-   configuration changes. Backups include SQLite history or the complete Sheet
-   journal, including rejected concurrent attempts.
+6. A member-only saved-records view works even when no active partner matches.
+   A backend label and non-secret storage fingerprint help detect configuration
+   changes. Backups are taken with `python -m src.snd_backup` (the operational
+   page no longer carries a Backup or Legacy Tracker button) and include SQLite
+   history or the complete Sheet journal, including rejected concurrent attempts.
 7. `python -m src.snd_backup` exports an existing SQLite file read-only and can
    stage a migration against an explicit Sheet ID before production settings are
    changed. It creates checksummed source and destination backups, rejects any

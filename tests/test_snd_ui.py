@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from streamlit.testing.v1 import AppTest
 
-from src.snd_backup import verified_cutover_partners
+from src.snd_backup import legacy_sqlite_backup, verified_cutover_partners
 from src.snd_cloud_store import GoogleSheetsSNDStore
 from src.snd_matching import requirement_signature
 from src.snd_store import SNDStore
@@ -15,7 +15,9 @@ from tests.fake_sheets import BOOKS, FakeBook
 HARNESS_PATH = Path(__file__).with_name("snd_ui_harness.py")
 
 
-class SNDViewTests(unittest.TestCase):
+class SNDHarnessCase(unittest.TestCase):
+    """Shared S&D harness plumbing; holds no tests of its own."""
+
     def setUp(self):
         self.path = Path(__file__).with_name(f".tmp_snd_ui_{uuid4().hex}.sqlite3")
 
@@ -56,6 +58,8 @@ class SNDViewTests(unittest.TestCase):
                 "overall_percent": percent,
             })
 
+
+class SNDViewTests(SNDHarnessCase):
     def test_partner_selector_renders_only_one_workspace(self):
         app = self.app("ELDs", partners=["Demo Partner", "Second Partner"])
         self.assertIsNone(app.selectbox(key="snd_function_demo partner").value)
@@ -244,15 +248,39 @@ class SNDViewTests(unittest.TestCase):
         self.assertEqual(app.table[0].value.iloc[0]["name"], "Retained requirement")
         self.assertFalse(app.dataframe)
 
-    def test_member_can_download_legacy_database_while_storage_is_disabled(self):
+    def test_operational_ui_has_no_legacy_tracker_or_backup_access(self):
+        """The Legacy Tracker and Backup entry points are gone from the tracker page.
+
+        The legacy file, its reader, and the recovery CLI stay untouched; only
+        the operational buttons are withdrawn.
+        """
+        self.save_partner("Live Partner", "ELDs", deliverable="Entered on Cloud")
+        before = self.path.read_bytes()
+        app = self.app(partners=["Live Partner"], legacy_path=str(self.path))
+        self.assertFalse(app.exception)
+
+        labels = [item.label for item in app.expander]
+        self.assertFalse([label for label in labels if "Legacy" in label])
+        self.assertFalse([label for label in labels if "backup" in label.casefold()])
+        self.assertEqual(labels, ["All saved requirements (1)"])
+        self.assertFalse(app.get("download_button"))
+        button_labels = [item.label for item in app.button]
+        self.assertFalse([label for label in button_labels
+                          if "legacy" in label.casefold() or "backup" in label.casefold()])
+        self.assertEqual(self.path.read_bytes(), before)
+
+        # The retained recovery reader still works outside the operational UI.
+        self.assertEqual(legacy_sqlite_backup(self.path)["requirements"], 1)
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_saved_records_panel_survives_disabled_storage_without_backup_button(self):
         self.save_partner("Live Partner", "ELDs", deliverable="Entered on Cloud")
         before = self.path.read_bytes()
         app = self.app(store_error="S&D storage is connected but the one-time migration has not been verified yet",
                        legacy_path=str(self.path))
         self.assertTrue(any("migration has not been verified" in item.value for item in app.error))
-        self.assertTrue(any("Legacy local S&D database" in item.label for item in app.expander))
-        downloads = {item.proto.label for item in app.get("download_button")}
-        self.assertEqual(downloads, {"Download legacy database (.sqlite3)", "Download legacy snapshot (.json)"})
+        self.assertFalse(app.expander)
+        self.assertFalse(app.get("download_button"))
         self.assertFalse(app.dataframe)  # No editor can save while storage is disabled.
         self.assertEqual(self.path.read_bytes(), before)
 
@@ -294,3 +322,180 @@ class SNDViewTests(unittest.TestCase):
         self.assertEqual(book.config.values, journal)  # Filtering never writes.
         self.assertEqual(GoogleSheetsSNDStore("ui", spreadsheet=book, expected_cutover_id="ui-cutover")
                          .list_requirements("Demo Partner")[0]["quantity"], 20)
+
+
+FRESH_COMPLETED = {
+    "status": "COMPLETED", "function": "ELDs", "partner_match": "matched",
+    "warnings": [], "requirements": [], "unmatched_evidence": [],
+    "supply_percent": 100.0, "demand_percent": 100.0, "overall_percent": 100.0,
+}
+
+
+class CheckFulfillmentSelectionTests(SNDHarnessCase):
+    """Regression: 'Check Fulfillment' used to jump to the next partner.
+
+    A fresh proof check rewrites the partner's workflow status (for example
+    Configured -> Fulfilled). The Status filter then dropped that partner from
+    the option list, and the out-of-range fallback reassigned
+    ``snd_selected_partner`` to ``shown[0]`` -- the following partner -- so the
+    requested result was never shown for the partner the member picked.
+    """
+
+    def two_configured_partners(self, **kwargs):
+        self.save_partner("Alpha", "ELDs", deliverable="Alpha Broadcast")
+        self.save_partner("Beta", "ELDs", deliverable="Beta Broadcast")
+        return self.app(partners=["Alpha", "Beta"], fresh_check=FRESH_COMPLETED, **kwargs)
+
+    @staticmethod
+    def partner_headers(app):
+        return [item.value for item in app.markdown if "snd-partner-name" in item.value]
+
+    def test_check_keeps_partner_a_selected_under_active_status_filter(self):
+        app = self.two_configured_partners()
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        self.assertEqual(app.selectbox(key="snd_selected_partner").value, "Alpha")
+
+        app.button(key="snd_check_alpha").click().run()
+
+        self.assertFalse(app.exception)
+        self.assertFalse(app.error)
+        selector = app.selectbox(key="snd_selected_partner")
+        self.assertEqual(selector.value, "Alpha")
+        self.assertIn("Alpha", selector.options)
+        self.assertEqual(app.session_state["snd_selected_partner"], "Alpha")
+        self.assertEqual(app.session_state["snd_workspace_partner"], "Alpha")
+
+    def test_partner_b_is_never_auto_selected_after_checking_partner_a(self):
+        app = self.two_configured_partners()
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        app.button(key="snd_check_alpha").click().run()
+
+        self.assertNotEqual(app.session_state["snd_selected_partner"], "Beta")
+        headers = self.partner_headers(app)
+        self.assertTrue(any("Alpha" in header for header in headers))
+        self.assertFalse(any("Beta" in header for header in headers))
+        self.assertEqual(app.session_state.test_check_calls, 1)
+        self.assertNotIn("snd_latest_check_beta", app.session_state)
+        store = SNDStore(self.path)
+        self.assertIsNone(store.get_check(
+            "Beta", requirement_signature(store.list_requirements("Beta"), "ELDs"),
+        ))
+
+    def test_result_is_attributed_to_the_checked_partner(self):
+        app = self.two_configured_partners()
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        app.button(key="snd_check_alpha").click().run()
+
+        self.assertEqual(app.session_state["snd_latest_check_alpha"]["result"]["status"], "COMPLETED")
+        self.assertTrue(any("Fulfilled · 100%" in item.value for item in app.markdown))
+        self.assertEqual([metric.value for metric in app.metric], ["100%", "100%", "100%"])
+        store = SNDStore(self.path)
+        stored = store.get_check(
+            "Alpha", requirement_signature(store.list_requirements("Alpha"), "ELDs"),
+        )
+        self.assertEqual(stored["status"], "COMPLETED")
+        self.assertEqual(stored["overall_percent"], 100.0)
+        self.assertEqual(app.session_state["snd_latest_check_alpha"]["signature"],
+                         requirement_signature(store.list_requirements("Alpha"), "ELDs"))
+
+    def test_check_never_duplicates_or_rewrites_requirements(self):
+        store = SNDStore(self.path)
+        self.save_partner("Alpha", "ELDs", deliverable="Alpha Broadcast")
+        self.save_partner("Beta", "ELDs", deliverable="Beta Broadcast")
+        before = store.export_snapshot()["tables"]
+        app = self.app(partners=["Alpha", "Beta"], fresh_check=FRESH_COMPLETED)
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        app.button(key="snd_check_alpha").click().run()
+        self.assertFalse(app.exception)
+
+        after = store.export_snapshot()["tables"]
+        for table in ("requirements", "partner_functions", "requirement_history",
+                      "invoice_exceptions"):
+            self.assertEqual(after[table], before[table], table)
+        self.assertEqual([row["name"] for row in store.all_requirements()],
+                         ["Alpha Broadcast", "Beta Broadcast"])
+        self.assertEqual(len(store.list_requirements("Alpha")), 1)
+
+    def test_filters_stay_authoritative_after_the_check_rerun(self):
+        app = self.two_configured_partners()
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        app.button(key="snd_check_alpha").click().run()
+        self.assertEqual(app.session_state["snd_pinned_partner"], "Alpha")
+
+        # Steering the Status filter releases the pin, so the new Fulfilled
+        # status of Alpha is honoured again.
+        app.selectbox(key="snd_status_filter").select("Fulfilled").run()
+        self.assertNotIn("snd_pinned_partner", app.session_state)
+        selector = app.selectbox(key="snd_selected_partner")
+        self.assertEqual(selector.options, ["Alpha"])
+        self.assertEqual(selector.value, "Alpha")
+
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        self.assertEqual(app.selectbox(key="snd_selected_partner").options, ["Beta"])
+
+        app.selectbox(key="snd_status_filter").select("All").run()
+        self.assertEqual(app.selectbox(key="snd_selected_partner").options, ["Alpha", "Beta"])
+
+    def test_explicit_partner_change_still_switches_and_releases_the_pin(self):
+        app = self.two_configured_partners()
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        app.button(key="snd_check_alpha").click().run()
+
+        app.selectbox(key="snd_selected_partner").select("Beta").run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["snd_selected_partner"], "Beta")
+        self.assertNotIn("snd_pinned_partner", app.session_state)
+        self.assertTrue(any("Beta" in header for header in self.partner_headers(app)))
+
+    def test_pin_does_not_survive_a_month_scope_change(self):
+        self.save_partner("Alpha", "ELDs", deliverable="Alpha Broadcast")
+        self.save_partner("Beta", "ELDs", deliverable="Beta Broadcast")
+        app = self.app(specs=[{"name": "Alpha", "end": "2026-08"}, {"name": "Beta", "end": "2027-01"}],
+                       fresh_check=FRESH_COMPLETED)
+        app.button(key="snd_check_alpha").click().run()
+        self.assertEqual(app.session_state["snd_pinned_partner"], "Alpha")
+
+        app.selectbox(key="snd_month_filter").select("October").run()
+        self.assertFalse(app.exception)
+        self.assertNotIn("snd_pinned_partner", app.session_state)
+        self.assertEqual(app.selectbox(key="snd_selected_partner").options, ["Beta"])
+
+    def test_check_with_no_status_filter_keeps_the_same_partner(self):
+        app = self.two_configured_partners()
+        self.assertEqual(app.selectbox(key="snd_selected_partner").value, "Alpha")
+        app.button(key="snd_check_alpha").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["snd_selected_partner"], "Alpha")
+        self.assertEqual(app.selectbox(key="snd_selected_partner").options, ["Alpha", "Beta"])
+
+    def test_google_sheets_check_writes_one_proof_event_and_keeps_requirements(self):
+        book = FakeBook()
+        verified_cutover_partners({}, GoogleSheetsSNDStore("ui", spreadsheet=book), apply=True,
+                                  migration_id="ui-cutover", source_backup_sha256="0" * 64)
+        book_id = uuid4().hex
+        BOOKS[book_id] = book
+        self.addCleanup(BOOKS.pop, book_id, None)
+        store = GoogleSheetsSNDStore("ui", spreadsheet=book, expected_cutover_id="ui-cutover")
+        store.replace_requirements("Alpha", "ELDs", [
+            {"id": "a1", "kind": "supply", "name": "Alpha Broadcast", "quantity": 1}])
+        store.replace_requirements("Beta", "ELDs", [
+            {"id": "b1", "kind": "supply", "name": "Beta Broadcast", "quantity": 1}])
+        before = len(book.config.values)
+
+        app = self.app(backend="google", book_id=book_id, fresh_check=FRESH_COMPLETED,
+                       partners=["Alpha", "Beta"])
+        app.selectbox(key="snd_status_filter").select("Configured").run()
+        app.button(key="snd_check_alpha").click().run()
+        self.assertFalse(app.exception)
+        self.assertFalse(app.error)
+        self.assertEqual(app.session_state["snd_selected_partner"], "Alpha")
+
+        appended = [json.loads(row[1]) for row in book.config.values[before:]]
+        self.assertEqual([sorted(event["changes"]) for event in appended], [["check"]])
+        self.assertEqual([row[0] for row in book.config.values[before:]], ["alpha"])
+        reopened = GoogleSheetsSNDStore("ui", spreadsheet=book, expected_cutover_id="ui-cutover")
+        self.assertEqual([row["name"] for row in reopened.all_requirements()],
+                         ["Alpha Broadcast", "Beta Broadcast"])
+        self.assertEqual(reopened.get_check(
+            "Alpha", requirement_signature(reopened.list_requirements("Alpha"), "ELDs"),
+        )["status"], "COMPLETED")

@@ -22,7 +22,8 @@ app_path = Path(__file__).resolve().parents[1] / "app.py"
 tree = ast.parse(app_path.read_text(encoding="utf-8"))
 names = {"section_title", "empty_state", "_snd_editor_key", "_snd_cache_partner_draft",
          "_snd_apply_editor_state", "_snd_capture_editor_draft", "_snd_checked_at_label", "_snd_editor",
-         "_snd_editor_rows", "_snd_check_results", "_snd_legacy_rescue_panel", "tab_snd_tracker"}
+         "_snd_editor_rows", "_snd_check_results", "_snd_legacy_rescue_panel",
+         "_snd_release_partner_pin", "tab_snd_tracker"}
 nodes = [node for node in tree.body if
          (isinstance(node, ast.FunctionDef) and node.name in names) or
          (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and

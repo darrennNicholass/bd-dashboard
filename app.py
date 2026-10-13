@@ -2138,6 +2138,17 @@ def _snd_cache_partner_draft(partner_id: str) -> None:
             )
 
 
+def _snd_release_partner_pin() -> None:
+    """Drop the post-check pin as soon as the member steers the list themselves.
+
+    A proof check changes the partner's workflow status, which can push it out
+    of an active Status filter. The pin keeps that partner selected for the
+    rerun that renders its result; any explicit filter or partner change here
+    hands control back to the filters.
+    """
+    st.session_state.pop("snd_pinned_partner", None)
+
+
 def _snd_apply_editor_state(frame: pd.DataFrame, state: dict) -> pd.DataFrame:
     """Apply Streamlit's editor delta to a frame when restoring a draft."""
     records = frame.to_dict("records")
@@ -2258,11 +2269,13 @@ def _snd_check_results(result: dict) -> None:
 
 
 def _snd_legacy_rescue_panel() -> None:
-    """One-time, read-only download of the previous version's local SQLite file.
+    """Retained recovery view for the previous version's local SQLite file.
 
-    The pre-fix app saved S&D data to a file on the Cloud container. It is not
-    durable, so members can download it for the verified migration. Nothing is
-    written, and the panel disappears once the file no longer exists.
+    Deliberately NOT rendered by the operational S&D Tracker: the one-time
+    rescue is finished and the storage backend is Google Sheets. The reader
+    (``snd_backup.legacy_sqlite_backup``), the recovery snapshots, and
+    ``python -m src.snd_backup`` are untouched, so this panel can be re-enabled
+    for a future incident without rebuilding it. Nothing here is ever written.
     """
     legacy = snd_backup.legacy_sqlite_backup()
     if legacy is None:
@@ -2308,12 +2321,10 @@ def tab_snd_tracker(data: dict) -> None:
         st.info("S&D requirements and evidence are available to members only.", icon=":material/lock:")
         return
 
-    _snd_legacy_rescue_panel()
     frame = data["frame"]
     active_all = frame.df_partner_active
     try:
         store = get_store()
-        snapshot = store.export_snapshot()
         assignments = store.get_partner_function_assignments()
         counts = store.requirement_counts()
         saved_rows = store.all_requirements()
@@ -2322,14 +2333,10 @@ def tab_snd_tracker(data: dict) -> None:
         return
     reference = sha256(store.storage_identity.encode()).hexdigest()[:10]
     st.caption(f"Storage: {store.storage_label} · Reference: {reference}")
-    with st.expander(f"All saved requirements & backup ({len(saved_rows)})"):
+    with st.expander(f"All saved requirements ({len(saved_rows)})"):
         st.caption("Saved records remain available here regardless of partner status, name changes, or filters.")
         if saved_rows:
             st.table(pd.DataFrame(saved_rows)[["partner_name", "kind", "name", "quantity"]])
-        st.download_button(
-            "Download S&D backup", json.dumps(snapshot, ensure_ascii=False, indent=2),
-            file_name="snd-backup.json", mime="application/json", key="snd_backup",
-        )
     if active_all.empty:
         empty_state("No active partners in this period.")
         return
@@ -2356,11 +2363,18 @@ def tab_snd_tracker(data: dict) -> None:
     with st.container(border=True, key="snd_filters"):
         month_col, status_col = st.columns(2, gap="large")
         with month_col:
-            selected_month = st.selectbox("Month", month_options, key="snd_month_filter")
+            selected_month = st.selectbox(
+                "Month", month_options, key="snd_month_filter",
+                on_change=_snd_release_partner_pin,
+            )
         with status_col:
-            selected_status = st.selectbox("Status", status_options, key="snd_status_filter")
+            selected_status = st.selectbox(
+                "Status", status_options, key="snd_status_filter",
+                on_change=_snd_release_partner_pin,
+            )
         search = st.text_input(
             "Search Partner", placeholder="Search partner name...", key="snd_partner_search",
+            on_change=_snd_release_partner_pin,
         ).casefold().strip()
 
         active = month_frames[selected_month]
@@ -2392,13 +2406,23 @@ def tab_snd_tracker(data: dict) -> None:
             if search in name.casefold()
             and (selected_status == "All" or partner_state[name]["status"] == selected_status)
         ]
+        pinned = st.session_state.get("snd_pinned_partner")
+        if pinned not in partner_state:
+            # The pin cannot outlive the Month scope it was taken in.
+            _snd_release_partner_pin()
+        elif pinned not in shown and search in pinned.casefold():
+            # A proof check moves the partner's status (e.g. Configured ->
+            # Fulfilled). Keep it listed and selected so the member reads the
+            # result they just requested instead of being bumped to the next
+            # partner by the Status filter.
+            shown = sorted(shown + [pinned], key=str.casefold)
         selected_name = None
         if shown:
             if st.session_state.get("snd_selected_partner") not in shown:
                 st.session_state.snd_selected_partner = shown[0]
             selected_name = st.selectbox(
                 "Select Partner", shown, key="snd_selected_partner",
-                placeholder="Select a partner",
+                placeholder="Select a partner", on_change=_snd_release_partner_pin,
             )
 
     if not shown or selected_name is None:
@@ -2533,6 +2557,8 @@ def tab_snd_tracker(data: dict) -> None:
                             "signature": signature,
                             "result": copy.deepcopy(previous),
                         }
+                        # The fresh status must not relocate the selection.
+                        st.session_state.snd_pinned_partner = name
                         st.rerun()
         if previous:
             _snd_check_results(previous)
