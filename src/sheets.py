@@ -30,6 +30,8 @@ import gspread
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
+from .sheet_ids import parse_sheet_id, sheet_id_hint
+
 # ---------------------------------------------------------------------------
 # Konstanta path & konfigurasi
 # ---------------------------------------------------------------------------
@@ -42,6 +44,14 @@ CREDENTIALS_PATH = PROJECT_ROOT / "credentials.json"
 # Nama environment variable. Hanya NAMA yang boleh muncul di log, bukan nilainya.
 ENV_ACTIVE_ESSM = "ACTIVE_ESSM_URL"
 ENV_NATIONAL_SOURCE = "NATIONAL_SOURCE_URL"
+
+# Market Research database baru (berlaku mulai 1 Oktober 2026). Menerima ID
+# spreadsheet maupun URL penuh. Active ESSM TIDAK diubah: ia tetap sumber
+# data historis sampai September 2026.
+ENV_MARKET_RESEARCH_DB = "MARKET_RESEARCH_DB_URL"
+# Opsional: nama tab yang dipakai. Boleh beberapa, dipisah koma. Kalau tidak
+# diisi, semua tab dipindai dan hanya tab yang skemanya cocok yang dipakai.
+ENV_MARKET_RESEARCH_WORKSHEET = "MARKET_RESEARCH_DB_WORKSHEET"
 
 # Tiga tab Market Research di Active ESSM.
 # Sudah DIKONFIRMASI manual oleh BD (bukan hasil tebakan), lihat Phase 1.
@@ -93,7 +103,12 @@ def load_environment() -> None:
         lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
     except OSError:
         return
-    wanted = {ENV_ACTIVE_ESSM, ENV_NATIONAL_SOURCE}
+    wanted = {
+        ENV_ACTIVE_ESSM,
+        ENV_NATIONAL_SOURCE,
+        ENV_MARKET_RESEARCH_DB,
+        ENV_MARKET_RESEARCH_WORKSHEET,
+    }
     for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
@@ -119,6 +134,7 @@ def env_status() -> dict[str, bool]:
     return {
         ENV_ACTIVE_ESSM: bool(os.getenv(ENV_ACTIVE_ESSM, "").strip()),
         ENV_NATIONAL_SOURCE: bool(os.getenv(ENV_NATIONAL_SOURCE, "").strip()),
+        ENV_MARKET_RESEARCH_DB: bool(_optional_setting(ENV_MARKET_RESEARCH_DB)),
     }
 
 
@@ -332,4 +348,251 @@ def try_read_national_values(title: str) -> list[list[str]] | None:
     try:
         return read_national_values(title)
     except gspread.WorksheetNotFound:
+        return None
+
+
+# ===========================================================================
+# MARKET RESEARCH DATABASE (sumber baru, berlaku 1 Oktober 2026)
+# ===========================================================================
+#
+# Spreadsheet ini TERPISAH dari Active ESSM dan strukturnya berbeda. Modul ini
+# hanya membuka dan membaca; pemetaan skema ada di src/mr_sources.py.
+#
+# Kegagalan dibedakan dengan sengaja supaya dashboard tidak pernah diam-diam
+# berpindah ke sumber yang salah:
+#   MRNotConfiguredError  -> MARKET_RESEARCH_DB_URL belum diisi
+#   MRConfigValueError    -> nilainya ada tapi bukan ID/URL spreadsheet
+#   MRAccessDeniedError   -> service account belum diberi akses (403/404)
+#   MRWorksheetError      -> nama tab tidak ada (daftar tab disebutkan)
+#   MRAPIError            -> kuota, jaringan, atau API Sheets dimatikan
+# Spreadsheet KOSONG bukan error: itu dilaporkan sebagai nol baris.
+
+
+class MRSourceError(RuntimeError):
+    """Kesalahan sumber Market Research yang aman ditampilkan ke pengguna.
+
+    Pesannya tidak pernah memuat URL, ID spreadsheet, atau kredensial.
+    """
+
+
+class MRNotConfiguredError(MRSourceError):
+    """MARKET_RESEARCH_DB_URL belum tersedia di .env maupun Streamlit Secrets."""
+
+
+class MRConfigValueError(MRSourceError):
+    """Nilai konfigurasi ada, tapi bukan ID atau URL spreadsheet yang sah."""
+
+
+class MRAccessDeniedError(MRSourceError):
+    """Service account tidak punya akses baca ke spreadsheet tersebut."""
+
+
+class MRWorksheetError(MRSourceError):
+    """Tab yang diminta tidak ada di spreadsheet."""
+
+
+class MRAPIError(MRSourceError):
+    """Google Sheets API menolak permintaan (kuota, API mati, jaringan)."""
+
+
+def _optional_setting(name: str) -> str:
+    """Ambil konfigurasi opsional dari env/.env lalu Streamlit Secrets.
+
+    Mengembalikan string kosong kalau belum diisi. Nilainya tidak pernah
+    dicetak oleh modul ini.
+    """
+    load_environment()
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    try:
+        return str(st.secrets[name]).strip()
+    except (KeyError, FileNotFoundError, AttributeError):
+        return ""
+
+
+def market_research_db_configured() -> bool:
+    """True kalau sumber Market Research baru sudah dikonfigurasi."""
+    return bool(_optional_setting(ENV_MARKET_RESEARCH_DB))
+
+
+def market_research_db_id() -> str:
+    """ID spreadsheet Market Research database.
+
+    Raises:
+        MRNotConfiguredError: konfigurasi belum ada.
+        MRConfigValueError: nilainya bukan ID/URL spreadsheet.
+    """
+    raw = _optional_setting(ENV_MARKET_RESEARCH_DB)
+    if not raw:
+        raise MRNotConfiguredError(
+            f"Market Research database belum dikonfigurasi. Isi {ENV_MARKET_RESEARCH_DB} "
+            "dengan ID atau URL spreadsheet Market Research yang baru, lalu bagikan "
+            "spreadsheet itu ke service account sebagai Viewer."
+        )
+    sheet_id = parse_sheet_id(raw)
+    if not sheet_id:
+        raise MRConfigValueError(
+            f"{ENV_MARKET_RESEARCH_DB} harus berupa ID spreadsheet atau URL Google Sheets: "
+            f"{sheet_id_hint(raw)}."
+        )
+    return sheet_id
+
+
+def market_research_db_worksheet_names() -> tuple[str, ...]:
+    """Tab yang dipilih lewat konfigurasi. Kosong = pindai semua tab."""
+    raw = _optional_setting(ENV_MARKET_RESEARCH_WORKSHEET)
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _classify_api_error(exc: gspread.exceptions.APIError) -> MRSourceError:
+    """Terjemahkan APIError menjadi kesalahan yang bisa ditindaklanjuti."""
+    status = str(exc.error.get("status", "")) if isinstance(exc.error, dict) else ""
+    code = getattr(exc, "code", None)
+    if status == "SERVICE_DISABLED":
+        return MRAPIError(
+            "Google Sheets API belum diaktifkan di project service account. "
+            "Aktifkan Google Sheets API, tunggu beberapa menit, lalu coba lagi."
+        )
+    if code in (401, 403) or status in ("PERMISSION_DENIED", "UNAUTHENTICATED"):
+        return MRAccessDeniedError(
+            "Service account belum punya akses baca ke Market Research database. "
+            "Bagikan spreadsheet itu ke alamat service account dashboard "
+            "(minimal Viewer), bukan ke akun pribadi."
+        )
+    if code == 404 or status == "NOT_FOUND":
+        return MRAccessDeniedError(
+            "Market Research database tidak ditemukan dengan ID yang dikonfigurasi. "
+            f"Periksa kembali nilai {ENV_MARKET_RESEARCH_DB} dan akses service account."
+        )
+    if code == 429 or status == "RESOURCE_EXHAUSTED":
+        return MRAPIError(
+            "Kuota Google Sheets API terlampaui. Coba lagi beberapa menit lagi."
+        )
+    return MRAPIError(
+        f"Google Sheets API gagal merespons saat membaca Market Research database "
+        f"(kode {code if code is not None else 'tidak diketahui'})."
+    )
+
+
+@lru_cache(maxsize=1)
+def open_market_research_db() -> gspread.Spreadsheet:
+    """Buka Market Research database baru (read-only, lewat client yang sama)."""
+    sheet_id = market_research_db_id()
+    try:
+        return get_client().open_by_key(sheet_id)
+    except gspread.SpreadsheetNotFound as exc:
+        raise MRAccessDeniedError(
+            "Market Research database tidak ditemukan atau belum dibagikan ke "
+            "service account dashboard. Bagikan spreadsheet itu sebagai Viewer."
+        ) from exc
+    except gspread.exceptions.APIError as exc:
+        raise _classify_api_error(exc) from exc
+
+
+def market_research_db_worksheets() -> list[gspread.Worksheet]:
+    """Worksheet yang akan dibaca dari Market Research database.
+
+    Kalau MARKET_RESEARCH_DB_WORKSHEET diisi, hanya tab itu yang dipakai dan
+    nama tab yang salah menimbulkan MRWorksheetError berisi daftar tab yang
+    tersedia. Kalau tidak diisi, semua tab dikembalikan dan penyaring skema
+    di mr_sources.py yang memutuskan tab mana yang berisi data MR.
+    """
+    spreadsheet = open_market_research_db()
+    try:
+        available = spreadsheet.worksheets()
+    except gspread.exceptions.APIError as exc:
+        raise _classify_api_error(exc) from exc
+
+    requested = market_research_db_worksheet_names()
+    if not requested:
+        return list(available)
+
+    by_name = {worksheet.title.strip().casefold(): worksheet for worksheet in available}
+    selected: list[gspread.Worksheet] = []
+    for name in requested:
+        worksheet = by_name.get(name.strip().casefold())
+        if worksheet is None:
+            raise MRWorksheetError(
+                f"Tab '{name}' tidak ada di Market Research database. "
+                f"Tab yang tersedia: {', '.join(sorted(item.title for item in available))}."
+            )
+        selected.append(worksheet)
+    return selected
+
+
+def read_market_research_db_grids() -> list[tuple[str, list[list[str]]]]:
+    """Baca raw values setiap tab Market Research database.
+
+    Returns:
+        list pasangan (nama_tab, grid). List kosong hanya terjadi kalau
+        spreadsheet-nya benar-benar tidak punya tab.
+    """
+    grids: list[tuple[str, list[list[str]]]] = []
+    for worksheet in market_research_db_worksheets():
+        try:
+            grids.append((worksheet.title, read_worksheet_values(worksheet)))
+        except gspread.exceptions.APIError as exc:
+            raise _classify_api_error(exc) from exc
+    return grids
+
+
+def market_research_db_access_report() -> dict[str, object]:
+    """Pemeriksaan akses READ-ONLY yang tidak menulis apa pun.
+
+    Dipakai oleh `python -m src.mr_sources preflight` dan oleh diagnostik
+    dashboard. Tidak pernah memuat URL, ID, atau kredensial di hasilnya.
+    """
+    report: dict[str, object] = {
+        "configured": market_research_db_configured(),
+        "ok": False,
+        "error": None,
+        "error_kind": None,
+        "spreadsheet_title": None,
+        "worksheets": [],
+        "selected_worksheets": list(market_research_db_worksheet_names()),
+        "service_account": service_account_email(),
+    }
+    if not report["configured"]:
+        report["error_kind"] = "not_configured"
+        report["error"] = (
+            f"{ENV_MARKET_RESEARCH_DB} belum diisi di .env maupun Streamlit Secrets."
+        )
+        return report
+    try:
+        spreadsheet = open_market_research_db()
+        report["spreadsheet_title"] = spreadsheet.title
+        report["worksheets"] = [worksheet.title for worksheet in spreadsheet.worksheets()]
+        # Memastikan nama tab yang dikonfigurasi benar-benar ada.
+        market_research_db_worksheets()
+    except MRSourceError as exc:
+        report["error_kind"] = type(exc).__name__
+        report["error"] = str(exc)
+        return report
+    except gspread.exceptions.APIError as exc:  # pragma: no cover - dijaga ganda
+        classified = _classify_api_error(exc)
+        report["error_kind"] = type(classified).__name__
+        report["error"] = str(classified)
+        return report
+    report["ok"] = True
+    return report
+
+
+def service_account_email() -> str | None:
+    """Alamat service account yang dipakai dashboard (bukan rahasia).
+
+    Diperlukan untuk pesan "bagikan spreadsheet ke alamat ini". Kunci privat
+    tidak pernah dibaca ke output.
+    """
+    if credentials_exist():
+        try:
+            import json
+
+            with CREDENTIALS_PATH.open(encoding="utf-8") as handle:
+                return json.load(handle).get("client_email")
+        except (OSError, ValueError):
+            return None
+    try:
+        return str(dict(st.secrets["gcp_service_account"]).get("client_email") or "") or None
+    except (KeyError, FileNotFoundError, AttributeError, TypeError):
         return None

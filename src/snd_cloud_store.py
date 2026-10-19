@@ -20,9 +20,11 @@ from gspread.utils import ValueRenderOption
 from google.oauth2.service_account import Credentials
 
 from src.google_drive_service import DriveServiceError, service_account_info
-from src.preparation import normalize_partner_function
+from src.preparation import (
+    canonical_invoice_reason, invoice_exception_map, normalize_partner_function,
+)
 from src.snd_store import (
-    FUNCTIONS, INVOICE_REASONS, SNDStoreError, SNDConflictError, CONFLICT_MESSAGE, partner_key,
+    FUNCTIONS, SNDStoreError, SNDConflictError, CONFLICT_MESSAGE, partner_key,
 )
 from src.snd_requirements import (
     validate_requirements, requirement_record, clean_check_result, requirements_revision,
@@ -834,17 +836,26 @@ class GoogleSheetsSNDStore:
         self._save(partner_name, data)
 
     def get_invoice_exceptions(self) -> dict[str, str]:
-        return {
-            key: data["invoice_exception"] for key, (_, data) in self._load().items()
-            if data.get("invoice_exception") in INVOICE_REASONS
-        }
+        """Canonical invoice exceptions, tolerating older spellings.
+
+        The journal may hold values written by an earlier version or edited by
+        hand ("inkind", "in-kind", "IN KIND"). Comparing those against the exact
+        canonical spelling used to drop them, which made an in-kind partner read
+        back as a Missing invoice. Reading is normalized instead; the stored
+        payload is left untouched until the next explicit write.
+        """
+        return invoice_exception_map({
+            key: data.get("invoice_exception")
+            for key, (_, data) in self._load().items()
+        })
 
     def set_invoice_exception(self, partner_name: str, reason: str | None) -> None:
-        if reason is not None and reason not in INVOICE_REASONS:
+        stored = canonical_invoice_reason(reason)
+        if reason is not None and stored is None:
             raise ValueError("Alasan pengecualian Invoice tidak valid.")
         # Always written explicitly, so a stale cached value can never turn an
         # intended change into a silent no-op.
-        self._patch(partner_name, {"invoice_exception": reason})
+        self._patch(partner_name, {"invoice_exception": stored})
 
     def save_check(self, partner_name: str, signature: str, result: dict) -> dict:
         """Replace the partner's previous check and return the stored result."""

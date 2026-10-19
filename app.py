@@ -37,7 +37,7 @@ import textwrap
 import pandas as pd
 import streamlit as st
 
-from src import charts, metrics, periods, preparation, sheets, snd_backup, snd_tracker
+from src import charts, metrics, mr_sources, periods, preparation, sheets, snd_backup, snd_tracker
 from src.google_drive_service import DriveServiceError
 from src.snd_matching import requirement_signature
 from src.snd_requirements import requirements_revision
@@ -122,6 +122,55 @@ ICON_FONT_CSS = """
 """
 
 # =========================================================
+# TEMA TAMPILAN (Dark / Light)
+# =========================================================
+#
+# Dark Mode adalah tampilan yang sudah ada dan tetap menjadi bawaan. Light
+# Mode adalah desain terpisah (putih + biru lembut), bukan hasil pembalikan
+# warna.
+#
+# CARA KERJANYA
+#   Pilihan tema disimpan di st.session_state dengan key THEME_STATE_KEY,
+#   diisi oleh pemilih tema di sidebar. Karena nilainya sudah ada di session
+#   state SEBELUM skrip dijalankan ulang, lembar gaya yang tepat bisa
+#   disuntikkan di bagian paling atas halaman - jadi tidak ada kedipan
+#   "dark dulu, baru light".
+#
+#   Hanya LAPISAN TAMPILAN yang berubah: tidak ada perubahan pada data,
+#   perhitungan, maupun penyimpanan. Pilihan tema juga tidak mengosongkan
+#   filter atau draf yang sedang diisi, karena nilainya hidup di session
+#   state yang sama seperti widget lain.
+#
+# BATAS YANG DIKETAHUI
+#   st.dataframe / st.data_editor digambar di atas <canvas> memakai tema
+#   bawaan Streamlit (.streamlit/config.toml), sehingga sel tabelnya tidak
+#   bisa diwarnai ulang lewat CSS. Di Light Mode, bingkai dan judul kartunya
+#   mengikuti palet terang, tetapi isi tabel tetap memakai tema Streamlit.
+#   Pengguna yang ingin tabel ikut terang bisa mengubahnya dari menu
+#   Appearance milik Streamlit; palet [theme.light] di config.toml sudah
+#   disiapkan untuk itu.
+
+THEME_DARK = "Dark"
+THEME_LIGHT = "Light"
+THEME_CHOICES: tuple[str, ...] = (THEME_DARK, THEME_LIGHT)
+THEME_STATE_KEY = "theme_mode"
+
+
+def selected_theme() -> str:
+    """Tema yang dipilih pengguna untuk sesi ini (bawaan: Dark)."""
+    value = st.session_state.get(THEME_STATE_KEY)
+    return value if value in THEME_CHOICES else THEME_DARK
+
+
+THEME = selected_theme()
+IS_LIGHT_THEME = THEME == THEME_LIGHT
+
+# Grafik Plotly ikut tema: hanya warna teks, garis bantu, dan warna "muted"
+# yang berubah; palet biru merek tetap sama.
+charts.use_theme(charts.THEME_LIGHT if IS_LIGHT_THEME else charts.THEME_DARK)
+
+
+# =========================================================
 # ACCESS CONTROL
 # =========================================================
 
@@ -157,6 +206,56 @@ ENTRY_DARK_STYLE = """
   }
 </style>
 """
+
+# Light Mode untuk halaman akses: putih bersih dengan aksen biru lembut,
+# bukan kebalikan dari versi gelapnya. Teks dibuat navy supaya tetap terbaca
+# walau tema bawaan Streamlit gelap.
+ENTRY_LIGHT_STYLE = """
+<style>
+  .stApp {
+    background:
+      radial-gradient(circle at 12% 12%, rgba(37,99,182,.10), transparent 42%),
+      radial-gradient(circle at 88% 82%, rgba(93,173,255,.12), transparent 40%),
+      linear-gradient(135deg, #F7FAFF 0%, #FFFFFF 46%, #F2F7FE 100%) !important;
+    color: #152945 !important;
+  }
+  .landing-badge { background: #E8F1FD !important; color: #1B4C8C !important;
+                   border-color: #CBDEF6 !important; }
+  .access-card, div[class*="st-key-login_card"] {
+    background: #FFFFFF !important;
+    border: 1px solid #DCE7F6 !important;
+    box-shadow: 0 18px 38px rgba(21, 41, 69, .08) !important;
+  }
+  .access-card h3, .login-title, .stApp h1 { color: #112440 !important; }
+  .access-card p, .login-sub, .login-foot { color: #566B8B !important; }
+  .access-icon, .login-mark { background: #E8F1FD !important; color: #1B4C8C !important; }
+  .login-eyebrow, .login-field-label { color: #2563B6 !important; }
+  [data-testid="stButton"] > button {
+    background: #FFFFFF !important; color: #1B4C8C !important;
+    border-color: #CBDEF6 !important;
+  }
+  [data-testid="stButton"] > button:hover {
+    background: #EEF5FD !important; color: #123A73 !important; border-color: #9CC3EF !important;
+  }
+  div[class*="st-key-login_submit"] button {
+    background: linear-gradient(110deg, #2563B6, #3D8BE0) !important;
+    color: #FFFFFF !important; border-color: #2563B6 !important;
+  }
+  div[class*="st-key-login_card"] [data-testid="stTextInputRootElement"] {
+    background: #FFFFFF !important; border-color: #CBDEF6 !important;
+  }
+  div[class*="st-key-login_card"] input { color: #152945 !important; }
+  div[class*="st-key-login_card"] input::placeholder { color: #93A4BE !important; }
+</style>
+"""
+
+
+def apply_entry_theme() -> None:
+    """Pasang lembar gaya halaman akses sesuai tema yang dipilih."""
+    st.markdown(
+        ENTRY_LIGHT_STYLE if IS_LIGHT_THEME else ENTRY_DARK_STYLE,
+        unsafe_allow_html=True,
+    )
 
 if "access_mode" not in st.session_state:
     st.session_state.access_mode = None
@@ -281,7 +380,7 @@ if st.session_state.access_mode is None:
     # HEADER
     # ==========================
 
-    st.markdown(ENTRY_DARK_STYLE, unsafe_allow_html=True)
+    apply_entry_theme()
 
     st.markdown(
         '<p style="text-align:center; margin:0 0 20px 0;">'
@@ -562,7 +661,7 @@ if st.session_state.access_mode == "login":
         unsafe_allow_html=True,
     )
 
-    st.markdown(ENTRY_DARK_STYLE, unsafe_allow_html=True)
+    apply_entry_theme()
 
     def _member_password() -> str | None:
         """Ambil MEMBER_PASSWORD dari Streamlit Secrets.
@@ -1219,7 +1318,276 @@ DARK_STYLE = """
   }
 </style>
 """
-st.markdown(DARK_STYLE, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# LIGHT MODE — desain terpisah: putih + biru lembut
+# ---------------------------------------------------------------------------
+#
+# Bukan pembalikan Dark Mode. Arahnya: latar putih bersih dengan sapuan biru
+# sangat muda, kartu putih berbatas biru-abu halus, aksen biru terkendali,
+# dan teks navy. Hook CSS-nya SAMA dengan Dark Mode (data-testid dan
+# st-key-<key> milik API Streamlit), jadi tata letak dan perilaku widget
+# tidak berubah sama sekali.
+#
+# Warna teks dipaksa eksplisit karena tema bawaan Streamlit di config.toml
+# adalah dark: tanpa aturan ini, teks terang akan tak terbaca di latar putih.
+LIGHT_STYLE = """
+<style>
+  /* ---- Permukaan halaman ---- */
+  .stApp {
+    color: #152945;
+    background:
+      radial-gradient(ellipse 60% 34% at 52% -6%, rgba(37,99,182,.07), transparent 70%),
+      radial-gradient(ellipse 34% 30% at 100% 42%, rgba(93,173,255,.07), transparent 72%),
+      linear-gradient(170deg, #FBFDFF 0%, #F6FAFF 55%, #F2F7FE 100%) !important;
+  }
+  .block-container { max-width: 1500px; padding-top: 2.25rem; }
+
+  /* ---- Teks umum ---- */
+  .stApp p, .stApp li, .stApp dd, .stApp dt,
+  [data-testid="stMarkdownContainer"],
+  [data-testid="stMarkdownContainer"] p,
+  [data-testid="stMarkdownContainer"] li,
+  [data-testid="stMarkdownContainer"] strong,
+  [data-testid="stText"] { color: #243B5C; }
+  .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 { color: #112440; }
+  [data-testid="stCaptionContainer"],
+  [data-testid="stCaptionContainer"] p,
+  small { color: #5F7490 !important; }
+
+  /* ---- Kartu ---- */
+  [data-testid="stVerticalBlockBorderWrapper"],
+  div[class*="st-key-bdcard"] {
+    background: #FFFFFF !important;
+    border: 1px solid #DEE8F6 !important;
+    box-shadow: 0 8px 22px rgba(21, 41, 69, .05) !important;
+    border-radius: 18px !important;
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  div[class*="st-key-bdcard"]:hover {
+    border-color: #BFD6F2 !important;
+    box-shadow: 0 12px 26px rgba(21, 41, 69, .08) !important;
+  }
+
+  /* ---- Kartu KPI ---- */
+  [data-testid="stMetric"] {
+    background: linear-gradient(170deg, #FFFFFF 0%, #FAFCFF 100%) !important;
+    border: 1px solid #DEE8F6 !important;
+    box-shadow: 0 8px 20px rgba(21, 41, 69, .05) !important;
+    border-radius: 17px !important;
+  }
+  [data-testid="stMetricValue"] { color: #112440 !important; }
+  [data-testid="stMetricLabel"] p, [data-testid="stMetricDelta"] { color: #64799A !important; }
+
+  /* ---- Judul & teks komponen sendiri ---- */
+  .bd-title, .bd-card-title, .bd-section-title, .bd-brand,
+  .bd-row-name, .bd-track-name, .bd-exp-name, .bd-access-name { color: #112440 !important; }
+  .bd-subtitle, .bd-card-sub, .bd-section-sub, .bd-row-meta,
+  .bd-track-meta, .bd-access-note, .bd-brand-sub, .bd-exp-pic,
+  .bd-exp-label, .bd-empty-note { color: #64799A !important; }
+  .bd-side-group-title { color: #2563B6 !important; }
+  .bd-side-group-line { background: linear-gradient(90deg, #CBDEF6, transparent) !important; }
+  .bd-row:hover { background: #F4F8FE !important; }
+
+  /* ---- Pill & badge ---- */
+  .bd-row-tag, .bd-pill-info {
+    color: #1B4C8C !important; background: #E8F1FD !important; border-color: #CBDEF6 !important;
+  }
+  .bd-pill-muted { color: #5F7490 !important; background: #F1F5FB !important; border-color: #DFE7F2 !important; }
+  .bd-pill-ok, .bd-badge-done { color: #0B6B4F !important; background: #E7F7F1 !important; border-color: #B8E3D3 !important; }
+  .bd-pill-alert, .bd-badge-missing { color: #8A4A07 !important; background: #FFF4E8 !important; border-color: #F6D9B6 !important; }
+  .bd-badge-wait, .bd-badge-none { color: #5F7490 !important; background: #F1F5FB !important; border-color: #DFE7F2 !important; }
+
+  /* ---- Baris tracker, kartu expiry, empty state ---- */
+  .bd-track-row, .bd-exp-card, .bd-empty {
+    background: #FBFDFF !important;
+    border-color: #DEE8F6 !important;
+  }
+  .bd-track-row-full, .bd-exp-critical {
+    background: linear-gradient(120deg, #EFF6FE, #FBFDFF) !important;
+    border-color: #CBDEF6 !important;
+  }
+  .bd-track-head span, .bd-track-date, .bd-empty-title { color: #334A6B !important; }
+  .bd-exp-date { color: #15325E !important; }
+  .bd-exp-days-normal { color: #64799A !important; }
+  .bd-exp-days-critical { color: #15325E !important; }
+  .bd-exp-days-warning { color: #2563B6 !important; }
+  .bd-exp-tag-critical { background: #E2EDFB !important; color: #15325E !important; }
+  .bd-exp-tag-warning { background: #E8F1FD !important; color: #2563B6 !important; }
+  .bd-exp-tag-normal { background: #F1F5FB !important; color: #5F7490 !important; }
+
+  /* ---- Sidebar ---- */
+  section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #FFFFFF 0%, #FAFCFF 100%) !important;
+    border-right: 1px solid #E2EBF7 !important;
+    box-shadow: 6px 0 24px rgba(21, 41, 69, .04);
+  }
+  section[data-testid="stSidebar"] div[class*="st-key-side_"] {
+    background: linear-gradient(180deg, #F8FBFF 0%, #FFFFFF 100%) !important;
+    border: 1px solid #E2EBF7 !important;
+  }
+  section[data-testid="stSidebar"] label p,
+  section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p { color: #5F7490 !important; }
+  section[data-testid="stSidebar"] [data-testid="stButton"] > button {
+    color: #1B4C8C !important; background: #FFFFFF !important; border-color: #CBDEF6 !important;
+  }
+  section[data-testid="stSidebar"] [data-testid="stButton"] > button:hover {
+    color: #123A73 !important; background: #EEF5FD !important; border-color: #9CC3EF !important;
+  }
+
+  /* ---- Tab ---- */
+  [data-testid="stTabs"] > div:first-child,
+  div[data-baseweb="tab-list"] { border-bottom-color: #E2EBF7 !important; }
+  [data-testid="stTab"] p, button[data-baseweb="tab"] p { color: #5F7490 !important; }
+  [data-testid="stTab"][aria-selected="true"], button[data-baseweb="tab"][aria-selected="true"] {
+    background: linear-gradient(120deg, #E8F1FD, #DCEAFB) !important;
+    border-radius: 11px 11px 0 0;
+  }
+  [data-testid="stTab"][aria-selected="true"] p,
+  button[data-baseweb="tab"][aria-selected="true"] p { color: #15325E !important; }
+  [data-testid="stTab"]:hover { background: #F4F8FE; }
+
+  /* ---- Expander ---- */
+  [data-testid="stExpander"] {
+    background: #FFFFFF !important;
+    border-color: #DEE8F6 !important;
+    border-radius: 14px !important;
+  }
+  [data-testid="stExpander"] summary p,
+  [data-testid="stExpander"] summary { color: #243B5C !important; }
+
+  /* ---- Tombol ---- */
+  [data-testid="stButton"] > button {
+    background: #FFFFFF !important; color: #1B4C8C !important; border-color: #CBDEF6 !important;
+  }
+  [data-testid="stButton"] > button:hover {
+    background: #EEF5FD !important; color: #123A73 !important; border-color: #9CC3EF !important;
+  }
+  [data-testid="stButton"] > button[kind="primary"] {
+    background: linear-gradient(110deg, #2563B6, #3D8BE0) !important;
+    border-color: #2563B6 !important; color: #FFFFFF !important;
+    box-shadow: 0 6px 18px rgba(37, 99, 182, .18);
+  }
+  [data-testid="stButton"] > button[kind="primary"]:hover {
+    background: linear-gradient(110deg, #1F58A5, #3281D8) !important; color: #FFFFFF !important;
+  }
+  [data-testid="stButton"] > button:disabled {
+    opacity: .5 !important; box-shadow: none !important; cursor: not-allowed !important;
+  }
+  [data-testid="stDownloadButton"] > button {
+    background: #FFFFFF !important; color: #1B4C8C !important; border-color: #CBDEF6 !important;
+  }
+
+  /* ---- Input, dropdown, segmented control ---- */
+  [data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"],
+  [data-baseweb="input"], [data-baseweb="base-input"],
+  [data-testid="stSelectbox"] > div > div, div[data-baseweb="select"] > div {
+    background: #FFFFFF !important; border-color: #CBDEF6 !important;
+  }
+  input, textarea, [data-baseweb="input"] input,
+  div[data-baseweb="select"] div[value], div[data-baseweb="select"] span {
+    color: #152945 !important;
+  }
+  input::placeholder, textarea::placeholder { color: #93A4BE !important; }
+  div[data-baseweb="select"] svg, [data-testid="stNumberInputContainer"] svg { fill: #5F7490 !important; }
+  /* Menu dropdown dirender di portal di luar .stApp, jadi selektornya global. */
+  div[data-baseweb="popover"] div[role="listbox"],
+  div[data-baseweb="popover"] ul[role="listbox"],
+  div[data-baseweb="menu"], div[data-baseweb="menu"] ul {
+    background: #FFFFFF !important; color: #152945 !important;
+    border: 1px solid #DEE8F6 !important;
+  }
+  div[data-baseweb="menu"] li, div[role="option"] { color: #152945 !important; }
+  div[data-baseweb="menu"] li:hover, div[role="option"]:hover { background: #EEF5FD !important; }
+  [data-testid="stSegmentedControl"] button,
+  [data-testid="stButtonGroup"] button {
+    background: #FFFFFF !important; color: #5F7490 !important; border-color: #CBDEF6 !important;
+  }
+  [data-testid="stSegmentedControl"] button[aria-checked="true"],
+  [data-testid="stSegmentedControl"] button[kind="segmented_controlActive"],
+  [data-testid="stButtonGroup"] button[aria-checked="true"] {
+    background: #E8F1FD !important; color: #15325E !important; border-color: #9CC3EF !important;
+  }
+  [data-testid="stRadio"] label p, [data-testid="stCheckbox"] label p,
+  [data-testid="stRadio"] [data-testid="stMarkdownContainer"] p { color: #243B5C !important; }
+  [data-testid="stWidgetLabel"] p, label p { color: #5F7490 !important; }
+
+  /* ---- Pesan status ---- */
+  [data-testid="stAlertContainer"], [data-testid="stAlert"] {
+    background: #F4F8FE !important; border: 1px solid #D4E3F7 !important;
+  }
+  [data-testid="stAlertContainer"] p, [data-testid="stAlert"] p,
+  [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"],
+  [data-testid="stAlert"] [data-testid="stMarkdownContainer"] { color: #1E3A5F !important; }
+  [data-testid="stNotificationContentWarning"] { background: #FFF6EA !important; }
+  [data-testid="stNotificationContentError"] { background: #FDF0F0 !important; }
+  [data-testid="stNotificationContentSuccess"] { background: #EDF8F3 !important; }
+
+  /* ---- Tabel & progress ---- */
+  /* Isi st.dataframe digambar di <canvas> dengan tema bawaan Streamlit, jadi
+     yang bisa diselaraskan di sini adalah bingkai dan latar wadahnya. */
+  [data-testid="stDataFrame"], [data-testid="stDataFrameResizable"],
+  div[class*="st-key-sndcard_"] [data-testid="stDataFrame"] {
+    border: 1px solid #DEE8F6 !important; border-radius: 14px; overflow: hidden;
+  }
+  [data-testid="stTable"] { color: #243B5C !important; }
+  [data-testid="stTable"] th { color: #334A6B !important; background: #F4F8FE !important; }
+  [data-testid="stTable"] td { border-color: #E6EDF8 !important; }
+  [data-testid="stProgress"] > div > div {
+    background: linear-gradient(90deg, #2563B6, #5AA7F0) !important;
+  }
+
+  /* ---- S&D Tracker ---- */
+  div[class*="st-key-sndcard_"] { padding: 1.35rem .7rem .9rem .7rem; }
+  .snd-partner-head { margin: .15rem 0 1.5rem 0; }
+  .snd-partner-name {
+    color: #112440; font-family: "Plus Jakarta Sans", sans-serif;
+    font-size: 1.5rem; font-weight: 720; line-height: 1.25; letter-spacing: -.025em;
+  }
+  .snd-status-row { display: flex; flex-wrap: wrap; gap: .65rem; margin: 1rem 0 2rem 0; }
+  .snd-status {
+    color: #4A5F7F; background: #F4F8FE; border: 1px solid #D4E3F7;
+    border-radius: 999px; padding: .38rem .75rem; font-size: .82rem;
+  }
+  .snd-status strong { color: #112440; font-weight: 650; }
+  .snd-last-checked { color: #6B7F9C; font-size: .76rem; align-self: center; padding: .38rem .1rem; }
+  .snd-editor-title {
+    color: #15325E; font-family: "Plus Jakarta Sans", sans-serif;
+    font-size: 1rem; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; margin: .75rem 0 .8rem 0;
+  }
+  .snd-editor-separator {
+    height: 1px; background: linear-gradient(90deg, #D4E3F7, transparent);
+    margin: 2.25rem 0 1.55rem 0;
+  }
+  div[class*="st-key-snd_function_block_"] { max-width: 520px; margin-bottom: .25rem; }
+  div[class*="st-key-snd_actions_"] { margin-top: 2.1rem; padding-top: .3rem; }
+  div[class*="st-key-snd_filters"] {
+    background: linear-gradient(180deg, #F8FBFF, #FFFFFF) !important;
+    border-color: #DEE8F6 !important; padding: 1rem 1.15rem 1.15rem 1.15rem;
+    margin-bottom: 1.15rem;
+  }
+  .snd-summary-row { display: flex; flex-wrap: wrap; gap: .55rem; margin: .2rem 0 1.25rem 0; }
+  .snd-summary-item {
+    color: #4A5F7F; background: #F6FAFF; border: 1px solid #DEE8F6;
+    border-radius: 10px; padding: .4rem .7rem; font-size: .8rem;
+  }
+  .snd-summary-item strong { color: #112440; margin-right: .2rem; }
+
+  /* ---- Kartu aksen gelap tetap gelap (identitas visual dashboard) ---- */
+  div[class*="st-key-hero_highlight"] .bd-card-title,
+  div[class*="st-key-hero_highlight"] .bd-card-sub,
+  div[class*="st-key-hero_highlight"] p { color: #FFFFFF !important; }
+
+  @media (max-width: 900px) {
+    .block-container { padding-left: 1rem; padding-right: 1rem; }
+    .bd-title { font-size: 1.25rem; }
+  }
+</style>
+"""
+
+# Dark Mode tetap bawaan; Light Mode dipasang hanya kalau dipilih pengguna.
+st.markdown(LIGHT_STYLE if IS_LIGHT_THEME else DARK_STYLE, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1228,14 +1596,24 @@ st.markdown(DARK_STYLE, unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Menarik data dari ESSM ...")
-def load_frames(reference_date: pd.Timestamp) -> dict[str, pd.DataFrame]:
-    """Ambil dan bangun seluruh dataframe. Hasilnya di-cache per tanggal acuan."""
+def load_frames(reference_date: pd.Timestamp) -> dict[str, object]:
+    """Ambil dan bangun seluruh dataframe. Hasilnya di-cache per tanggal acuan.
+
+    df_mr datang dari src/mr_sources.py, bukan langsung dari satu spreadsheet:
+    modul itu yang memegang aturan cutover 1 Oktober 2026 (Active ESSM untuk
+    periode sebelumnya, Market Research database untuk Oktober 2026 ke atas).
+
+    Returns:
+        {"frames": {...dataframe...}, "mr_diagnostics": {...}} — diagnostik
+        dipisahkan supaya periods.apply_period() tetap menerima dataframe saja.
+    """
     partner_grid = preparation.load_partner_grid()
-    df_mr = preparation.build_df_mr()
+    mr_load = mr_sources.build_df_mr(today=reference_date)
+    df_mr = mr_load.df_mr
     df_partner = preparation.attach_partner_functions(
         preparation.build_df_partner(partner_grid, reference_date=reference_date), df_mr
     )
-    return {
+    frames = {
         "df_mr": df_mr,
         "df_partner": df_partner,
         "df_conversion": preparation.build_df_conversion(partner_grid),
@@ -1245,6 +1623,29 @@ def load_frames(reference_date: pd.Timestamp) -> dict[str, pd.DataFrame]:
         "df_inkind": preparation.build_df_inkind(
             preparation.load_revenue_grid(sheets.NATIONAL_INKIND_WORKSHEET)
         ),
+    }
+    return {"frames": frames, "mr_diagnostics": mr_diagnostics(mr_load)}
+
+
+def mr_diagnostics(load: mr_sources.MRLoadResult) -> dict[str, object]:
+    """Ringkasan sumber MR yang aman di-cache dan aman ditampilkan.
+
+    Hanya nilai sederhana (str/bool/int) supaya bisa di-pickle oleh
+    st.cache_data, dan tidak pernah memuat URL, ID spreadsheet, atau
+    kredensial.
+    """
+    return {
+        "notes": list(load.notes),
+        "sources": {
+            name: {
+                "label": source.label,
+                "available": bool(source.available and not source.error),
+                "error": source.error,
+                "error_kind": source.error_kind,
+                "rows_used": int(source.rows_used),
+            }
+            for name, source in load.sources.items()
+        },
     }
 
 
@@ -1291,6 +1692,11 @@ def friendly_load_error(exc: BaseException) -> str:
     name = type(exc).__name__
     status = getattr(getattr(exc, "response", None), "status_code", None)
     text = f"{name} {status or ''}"
+
+    # Kesalahan sumber Market Research sudah ditulis sebagai pesan yang aman
+    # dan bisa ditindaklanjuti di src/sheets.py, jadi diteruskan apa adanya.
+    if isinstance(exc, sheets.MRSourceError):
+        return str(exc)
 
     if status == 429 or "Quota" in name or "RateLimit" in name:
         return (
@@ -1623,6 +2029,25 @@ def sidebar_controls() -> tuple[object, bool]:
                     format_func=lambda value: str(value).title(),
                 )
 
+        # ---- Appearance ----
+        # Pemilih tema sengaja diletakkan di sidebar, satu kelompok sendiri:
+        # mudah ditemukan, tidak menambah widget di area konten, dan nilainya
+        # hidup di session state yang sama seperti filter lain sehingga
+        # berganti tema tidak mengosongkan periode atau draf S&D.
+        sidebar_group("Appearance")
+        with st.container(border=True, key="side_theme"):
+            # st.radio (bukan segmented_control) dipakai sengaja: radio selalu
+            # punya satu pilihan terpilih, jadi tema tidak bisa "kosong".
+            st.radio(
+                "Tema tampilan",
+                THEME_CHOICES,
+                index=THEME_CHOICES.index(THEME),
+                key=THEME_STATE_KEY,
+                horizontal=True,
+                help="Dark adalah tampilan bawaan. Light memakai palet putih "
+                     "dan biru lembut. Pilihan berlaku selama sesi browser ini.",
+            )
+
         # ---- Data Source ----
         sidebar_group("Data Source")
         with st.container(border=True, key="side_source"):
@@ -1890,7 +2315,45 @@ def tab_overview(data: dict) -> None:
         )
 
 
+def mr_source_panel(data: dict) -> None:
+    """Terangkan sumber MR untuk periode terpilih, plus masalah kalau ada.
+
+    Aturan cutover-nya sendiri ada di src/mr_sources.py; di sini hanya
+    ditampilkan. Pesan kegagalan hanya untuk member: anonymous memakai data
+    demo sehingga keterangan konfigurasi tidak relevan baginya.
+    """
+    report = data.get("mr_report") or {}
+    sources = report.get("sources", {})
+    frame = data["frame"]
+    needed = mr_sources.sources_for_selection(frame.months)
+    labels = " + ".join(
+        mr_sources.SOURCE_LABELS.get(name, name) for name in needed
+    ) or "—"
+    rows = " · ".join(
+        f"{sources.get(name, {}).get('label', name)}: "
+        f"{sources.get(name, {}).get('rows_used', 0)} MR"
+        for name in needed
+    )
+    st.caption(
+        f"Sumber data periode {frame.label}: {labels}"
+        + (f" · {rows}" if rows else "")
+        + " · cutover 1 Oktober 2026"
+    )
+    if not IS_MEMBER:
+        return
+    for name in needed:
+        source = sources.get(name, {})
+        if source.get("error"):
+            st.warning(
+                f"{source.get('label', name)}: {source['error']}",
+                icon=":material/warning:",
+            )
+    for note in report.get("notes", []):
+        st.caption(f"Catatan kualitas data: {note}")
+
+
 def tab_market_research(data: dict) -> None:
+    mr_source_panel(data)
     left, right = st.columns([2, 3], gap="small")
     with left:
         card(
@@ -2033,6 +2496,28 @@ def tab_revenue(data: dict) -> None:
         )
 
 
+INVOICE_REQUIRED_LABEL = "Required"
+
+
+def invoice_status_label(has_invoice: object, exception: object) -> str:
+    """Status invoice yang ditampilkan di section Invoice Exception.
+
+    Aturannya satu tempat saja, dipakai tabel maupun heatmap:
+        invoice sudah ada                  -> "On file"
+        invoice TIDAK diperlukan (inkind / -> "N/A — <alasan>"
+            no membership)
+        invoice diperlukan tapi belum ada  -> "Missing"
+
+    Alasan dikanonikkan lewat preparation.canonical_invoice_reason(), jadi
+    "inkind", "in-kind", dan "IN KIND" semuanya berarti invoice tidak
+    diperlukan dan TIDAK pernah tampil sebagai "Missing".
+    """
+    if bool(has_invoice):
+        return "On file"
+    reason = preparation.canonical_invoice_reason(exception)
+    return f"N/A — {reason}" if reason else "Missing"
+
+
 def tab_documents(data: dict) -> None:
     left, right = st.columns(2, gap="small")
     with left:
@@ -2071,11 +2556,14 @@ def tab_documents(data: dict) -> None:
             editor = pd.DataFrame({
                 "Partner": tracker["partner_name"],
                 "Invoice": [
-                    "On file" if row.has_invoice else
-                    f"N/A — {row.invoice_exception}" if pd.notna(row.invoice_exception)
-                    else "Missing" for row in tracker.itertuples()
+                    invoice_status_label(row.has_invoice, row.invoice_exception)
+                    for row in tracker.itertuples()
                 ],
-                "Invoice Exception": tracker["invoice_exception"].fillna("Required"),
+                "Invoice Exception": [
+                    preparation.canonical_invoice_reason(row.invoice_exception)
+                    or INVOICE_REQUIRED_LABEL
+                    for row in tracker.itertuples()
+                ],
                 "Document Compliance": tracker["document_compliance_percent"].map(
                     lambda value: f"{value:.0f}%"
                 ),
@@ -2087,7 +2575,8 @@ def tab_documents(data: dict) -> None:
                 column_config={
                     "Invoice Exception": st.column_config.SelectboxColumn(
                         "Invoice Exception",
-                        options=["Required", "In-Kind", "No Membership"],
+                        options=[INVOICE_REQUIRED_LABEL]
+                        + list(preparation.INVOICE_EXCEPTION_REASONS),
                         required=True,
                     ),
                 },
@@ -2099,7 +2588,8 @@ def tab_documents(data: dict) -> None:
                     for before, after in zip(editor.itertuples(), updated.itertuples()):
                         if before[3] != after[3]:
                             store.set_invoice_exception(
-                                before[1], None if after[3] == "Required" else after[3]
+                                before[1],
+                                None if after[3] == INVOICE_REQUIRED_LABEL else after[3],
                             )
                 except SNDStoreError as exc:
                     st.error(str(exc))
@@ -2147,6 +2637,34 @@ def _snd_release_partner_pin() -> None:
     hands control back to the filters.
     """
     st.session_state.pop("snd_pinned_partner", None)
+
+
+def _snd_reload_saved_requirements(
+    partner_id: str,
+    baseline_key: str,
+    *,
+    storage_identity: str,
+    revision: str,
+    requirements: list[dict],
+) -> None:
+    """Re-seed the editors from the SAVED requirements for one partner.
+
+    This is the loading path the tracker depends on; it used to be reachable
+    only through a "Reload saved requirements" button, which has been removed
+    from the UI. The behavior is unchanged: unsaved drafts for this partner are
+    dropped, the editor widgets are rebuilt under a new revision, and the
+    baseline is set to what the store currently holds. Nothing is written.
+    """
+    for kind in ("function", "supply", "demand"):
+        st.session_state.pop(f"snd_draft_{kind}_{partner_id}", None)
+    st.session_state.pop(f"snd_function_{partner_id}", None)
+    st.session_state[baseline_key] = {
+        "storage": storage_identity,
+        "revision": revision,
+        "requirements": copy.deepcopy(requirements),
+    }
+    revision_key = f"snd_editor_revision_{partner_id}"
+    st.session_state[revision_key] = st.session_state.get(revision_key, 0) + 1
 
 
 def _snd_apply_editor_state(frame: pd.DataFrame, state: dict) -> pd.DataFrame:
@@ -2470,15 +2988,23 @@ def tab_snd_tracker(data: dict) -> None:
     baseline = st.session_state[baseline_key]
     stale = baseline["storage"] != store.storage_identity or baseline["revision"] != current_revision
     if stale:
-        st.warning("Saved requirements changed. Your draft is preserved; reload the saved version before editing again.")
-    if st.button("Reload saved requirements (discard draft)", key=f"snd_reload_{key}"):
-        for kind in ("function", "supply", "demand"):
-            st.session_state.pop(f"snd_draft_{kind}_{key}", None)
-        st.session_state.pop(f"snd_function_{key}", None)
-        st.session_state.pop(baseline_key, None)
-        revision_key = f"snd_editor_revision_{key}"
-        st.session_state[revision_key] = st.session_state.get(revision_key, 0) + 1
-        st.rerun()
+        # The "Reload saved requirements" button used to be the only way out of
+        # this state. It is gone from the UI, so the saved version is reloaded
+        # automatically instead: the store is the source of truth, and leaving a
+        # stale baseline on screen would keep Save disabled indefinitely.
+        _snd_reload_saved_requirements(
+            key,
+            baseline_key,
+            storage_identity=store.storage_identity,
+            revision=current_revision,
+            requirements=requirements,
+        )
+        st.warning(
+            "Saved requirements changed in another session, so the saved version was "
+            "reloaded. Re-apply any unsaved edits before saving."
+        )
+        baseline = st.session_state[baseline_key]
+        stale = False
     workflow_status = partner_state[name]["status"]
     setup = "Configured" if function and requirements else "Not configured"
     progress = (
@@ -3540,7 +4066,7 @@ def main() -> None:
 
     today = pd.Timestamp.today().normalize()
     try:
-        frames = load_frames(today)
+        bundle = load_frames(today)
     except Exception as exc:  # noqa: BLE001 - pesan ramah, detail tidak diteruskan
         # st.exception() sengaja TIDAK dipakai: stack trace gspread memuat
         # pesan API yang bisa berisi URL spreadsheet, dan aturan proyek ini
@@ -3548,6 +4074,9 @@ def main() -> None:
         # Yang ditampilkan hanya penyebab yang bisa ditindaklanjuti.
         st.error(friendly_load_error(exc), icon=":material/error:")
         return
+
+    frames = bundle["frames"]
+    mr_report = bundle["mr_diagnostics"]
 
     # Sumber post-partnership dimuat terpisah: kalau National_1.2 atau PSC
     # bermasalah, dashboard tetap tampil dan hanya section terkait yang
@@ -3571,6 +4100,9 @@ def main() -> None:
     # Anonymous tidak menerima data asli untuk visualisasi
     if not IS_MEMBER:
         data = mask_anonymous_data(data)
+    # Diagnostik sumber MR tidak memuat data partner, jadi aman dipasang
+    # setelah masking. Isinya hanya status sumber dan catatan kualitas data.
+    data["mr_report"] = mr_report
 
     header(frame, pd.Timestamp.now())
     kpi_row(data)

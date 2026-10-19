@@ -11,7 +11,13 @@ from pathlib import Path
 import re
 import sqlite3
 
-from src.preparation import normalize_partner_name, normalize_partner_function
+from src.preparation import (
+    INVOICE_EXCEPTION_REASONS,
+    canonical_invoice_reason,
+    invoice_exception_map,
+    normalize_partner_name,
+    normalize_partner_function,
+)
 from src.snd_requirements import (
     validate_requirements, requirement_record, clean_check_result, requirements_revision,
 )
@@ -19,7 +25,10 @@ from src.snd_requirements import (
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / ".local" / "snd_tracker.sqlite3"
 FUNCTIONS = {"ELDs", "EwAs", "SS"}
-INVOICE_REASONS = {"In-Kind", "No Membership"}
+# Bentuk kanonik yang disimpan. Ejaan lain ("inkind", "in kind", ...) tetap
+# diterima saat menulis dan tetap terbaca saat membaca, lewat
+# preparation.canonical_invoice_reason().
+INVOICE_REASONS = set(INVOICE_EXCEPTION_REASONS)
 
 
 class SNDStoreError(RuntimeError):
@@ -261,23 +270,33 @@ class SNDStore:
             )
 
     def get_invoice_exceptions(self) -> dict[str, str]:
+        """Pengecualian invoice dalam bentuk kanonik.
+
+        Nilai lama yang ejaannya berbeda ("inkind", "in-kind", "IN KIND")
+        tetap dibaca sebagai pengecualian yang sah; baris sumber tidak diubah.
+        Nilai yang tidak dikenali tidak dikembalikan, supaya invoice tidak
+        dianggap "tidak diperlukan" tanpa alasan yang jelas.
+        """
         with self._connect() as connection:
             rows = connection.execute("SELECT partner_key, reason FROM invoice_exceptions")
-            return {row["partner_key"]: row["reason"] for row in rows}
+            return invoice_exception_map(
+                {row["partner_key"]: row["reason"] for row in rows}
+            )
 
     def set_invoice_exception(self, partner_name: str, reason: str | None) -> None:
         key = partner_key(partner_name)
-        if reason is not None and reason not in INVOICE_REASONS:
+        stored = canonical_invoice_reason(reason)
+        if reason is not None and stored is None:
             raise ValueError("Alasan pengecualian Invoice tidak valid.")
         with self._connect() as connection:
-            if reason is None:
+            if stored is None:
                 connection.execute("DELETE FROM invoice_exceptions WHERE partner_key=?", (key,))
             else:
                 connection.execute(
                     "INSERT INTO invoice_exceptions VALUES (?,?,?) "
                     "ON CONFLICT(partner_key) DO UPDATE SET reason=excluded.reason, "
                     "updated_at=excluded.updated_at",
-                    (key, reason, datetime.now(timezone.utc).isoformat()),
+                    (key, stored, datetime.now(timezone.utc).isoformat()),
                 )
 
     def save_check(self, partner_name: str, signature: str, result: dict) -> dict:
@@ -310,57 +329,10 @@ class SNDStore:
         }
 
 
-_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
-_WRAPPERS = "'\"`<>()[]{} \t\r\n\u00a0"
-# A published-to-web link exposes a different identifier that the API cannot open.
-_PUBLISHED_URL = re.compile(r"/spreadsheets(?:/u/\d+)?/d/e/", re.IGNORECASE)
-_SHEET_URL = re.compile(r"/spreadsheets(?:/u/\d+)?/d/(?!e/)([A-Za-z0-9_-]+)", re.IGNORECASE)
-_QUERY_ID = re.compile(r"[?&#](?:id|key)=([A-Za-z0-9_-]+)")
-
-
-def clean_setting(value: str | None) -> str:
-    """Strip invisible characters and wrapping punctuation left by copy/paste."""
-    return str(value or "").translate(_INVISIBLE).strip(_WRAPPERS)
-
-
-def parse_sheet_id(value: str | None) -> str | None:
-    """Accept a bare spreadsheet ID or a full Google Sheets URL.
-
-    Tolerates surrounding whitespace, quotes or angle brackets added by pasting,
-    `/u/0/` account prefixes, and any `?query`/`#fragment`. A published
-    `/d/e/<token>/pubhtml` link is rejected: that token is not a spreadsheet ID.
-    """
-    text = clean_setting(value)
-    if not text:
-        return None
-    match = _SHEET_URL.search(text)
-    if match:
-        return match.group(1)
-    if _PUBLISHED_URL.search(text):
-        return None
-    match = _QUERY_ID.search(text)
-    if match:
-        return match.group(1)
-    return text if re.fullmatch(r"[A-Za-z0-9_-]+", text) else None
-
-
-def sheet_id_hint(value: str | None) -> str:
-    """Non-sensitive description of an unparseable value, for error messages."""
-    text = clean_setting(value)
-    if not text:
-        return "the value is empty after trimming quotes and whitespace"
-    if _PUBLISHED_URL.search(text):
-        return ("it is a published-to-web link (/d/e/...); open the spreadsheet and copy the "
-                "normal /spreadsheets/d/<ID>/edit address instead")
-    if "drive.google.com" in text.casefold() and "/folders/" in text.casefold():
-        return "it is a Drive folder link, not a spreadsheet link"
-    if "docs.google.com" in text.casefold() or text.casefold().startswith("http"):
-        return "it looks like a URL but contains no /spreadsheets/d/<ID> path"
-    invalid = sorted({character for character in text if not re.fullmatch(r"[A-Za-z0-9_-]", character)})
-    if invalid:
-        return (f"it is {len(text)} characters long and contains "
-                f"{len(invalid)} character type(s) that a spreadsheet ID never has")
-    return f"it is {len(text)} characters long"
+# Spreadsheet ID/URL parsing lives in src/sheet_ids.py so the S&D store and the
+# Market Research database share one implementation. Re-exported here because
+# callers and tests already import these names from this module.
+from src.sheet_ids import clean_setting, parse_sheet_id, sheet_id_hint  # noqa: E402
 
 
 def reject_source_sheet(sheet_id: str) -> None:

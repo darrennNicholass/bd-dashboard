@@ -72,6 +72,7 @@ from .preparation import (
     DOCUMENT_FIELDS,
     FUNNEL_STAGES,
     TERM_MONTH_ORDER,
+    canonical_invoice_reason,
     match_partner_name,
     normalize_partner_name,
 )
@@ -466,6 +467,13 @@ def get_document_tracker(
 ) -> pd.DataFrame:
     """Kelengkapan dokumen per partner AKTIF.
 
+    invoice_exceptions memetakan partner key (nama yang dinormalisasi) ke
+    alasan invoice TIDAK diperlukan. Alasannya dikanonikkan lewat
+    preparation.canonical_invoice_reason(), jadi "inkind", "in-kind", dan
+    "IN KIND" diperlakukan sama dan partner itu TIDAK pernah dihitung
+    sebagai invoice Missing. Alasan yang tidak dikenali diabaikan: invoice
+    tetap dianggap wajib, karena "tidak diperlukan" tidak boleh ditebak.
+
     Returns:
         DataFrame kolom: partner_name, stakeholder, has_proposal, has_mom,
         has_loa, has_invoice, documents_complete, documents_missing
@@ -490,7 +498,11 @@ def get_document_tracker(
         return pd.DataFrame(columns=columns)
 
     tracker = active[["partner_name", "stakeholder"] + document_columns].copy()
-    exceptions = invoice_exceptions or {}
+    exceptions = {
+        normalize_partner_name(key): reason
+        for key, raw in (invoice_exceptions or {}).items()
+        if (reason := canonical_invoice_reason(raw)) is not None
+    }
     tracker["invoice_exception"] = tracker["partner_name"].map(
         lambda name: exceptions.get(normalize_partner_name(name))
     )

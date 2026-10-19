@@ -95,6 +95,74 @@ COLOR_MUTED = "#324462"
 COLOR_TEXT = "#E7EFFF"
 COLOR_SUBTEXT = "#9EAFD0"
 COLOR_GRID = "#243856"
+# Teks yang digambar DI ATAS batang/sel berwarna muted. Selalu putih di kedua
+# tema, jadi kontrasnya tidak bergantung pada warna latar halaman.
+COLOR_ON_MUTED = "#FFFFFF"
+
+# ---------------------------------------------------------------------------
+# Tema grafik (Dark / Light)
+# ---------------------------------------------------------------------------
+#
+# Dashboard punya dua tampilan. Warna MEREK (palet biru di atas) sama di
+# kedua tema; yang berubah hanya warna teks, garis bantu, dan warna "muted",
+# supaya grafik tetap terbaca di latar putih maupun navy.
+#
+# Nilai-nilai itu dibaca saat figure dibuat (bukan saat modul diimpor), jadi
+# memanggil use_theme() sebelum membangun figure sudah cukup. Tidak ada
+# perhitungan atau data yang ikut berubah.
+
+THEME_DARK = "dark"
+THEME_LIGHT = "light"
+
+CHART_THEMES: dict[str, dict[str, str]] = {
+    THEME_DARK: {
+        "template": "plotly_dark",
+        "text": "#E7EFFF",
+        "subtext": "#9EAFD0",
+        "grid": "#243856",
+        "muted": "#324462",
+    },
+    THEME_LIGHT: {
+        # Latar putih: teks navy, garis bantu biru-abu sangat muda, dan
+        # "muted" tetap cukup gelap supaya label putih di atasnya terbaca.
+        "template": "plotly_white",
+        "text": "#152945",
+        "subtext": "#5A7191",
+        "grid": "#E4EBF7",
+        "muted": "#64809F",
+    },
+}
+
+ACTIVE_THEME = THEME_DARK
+TEMPLATE = CHART_THEMES[THEME_DARK]["template"]
+
+
+def use_theme(name: str) -> str:
+    """Pilih tema grafik: "dark" (bawaan) atau "light".
+
+    Returns:
+        nama tema yang aktif setelah pemanggilan.
+    """
+    global ACTIVE_THEME, TEMPLATE, COLOR_TEXT, COLOR_SUBTEXT, COLOR_GRID, COLOR_MUTED
+
+    key = str(name).strip().casefold()
+    if key not in CHART_THEMES:
+        raise ValueError(
+            f"Tema grafik tidak dikenal: {name!r}. Pilihan: {', '.join(CHART_THEMES)}."
+        )
+    palette = CHART_THEMES[key]
+    ACTIVE_THEME = key
+    TEMPLATE = palette["template"]
+    COLOR_TEXT = palette["text"]
+    COLOR_SUBTEXT = palette["subtext"]
+    COLOR_GRID = palette["grid"]
+    COLOR_MUTED = palette["muted"]
+    return ACTIVE_THEME
+
+
+def active_theme() -> str:
+    """Nama tema grafik yang sedang aktif."""
+    return ACTIVE_THEME
 
 # Kategori expiry: makin mendesak makin gelap. Label teksnya selalu ikut,
 # jadi kegelapan warna hanya penguat, bukan satu-satunya penanda.
@@ -147,7 +215,7 @@ def _style(
         top_margin += 22
 
     fig.update_layout(
-        template="plotly_dark",
+        template=TEMPLATE,
         font={"family": FONT_FAMILY, "size": BASE_FONT_SIZE, "color": COLOR_TEXT},
         margin={"l": 8, "r": 12, "t": top_margin, "b": 8},
         paper_bgcolor="rgba(0,0,0,0)",
@@ -801,7 +869,7 @@ def document_completeness_bar(
             marker_color=COLOR_MUTED,
             text=[value if value else "" for value in df_completeness["missing"]],
             textposition="inside",
-            textfont={"size": LABEL_FONT_SIZE, "color": COLOR_TEXT},
+            textfont={"size": LABEL_FONT_SIZE, "color": COLOR_ON_MUTED},
             hovertemplate="%{x} belum ada: %{y} partner<extra></extra>",
         )
     )
@@ -920,7 +988,7 @@ def post_partnership_bar(
             marker_color=COLOR_MUTED,
             text=[value if value else "" for value in df_completeness["missing"]],
             textposition="inside", insidetextanchor="middle",
-            textfont={"size": LABEL_FONT_SIZE, "color": COLOR_TEXT},
+            textfont={"size": LABEL_FONT_SIZE, "color": COLOR_ON_MUTED},
             hovertemplate="%{y} missing: %{x} partner<extra></extra>",
         )
     )

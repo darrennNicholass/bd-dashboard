@@ -231,14 +231,31 @@ class SNDViewTests(SNDHarnessCase):
         self.save_partner("Demo Partner", "SS", deliverable="Updated in another session")
         first.run()
         self.assertFalse(first.exception)
-        self.assertTrue(first.button(key="snd_save_demo partner").disabled)
-        self.assertEqual(first.dataframe[0].value.iloc[0]["Deliverable"], "Original")
-        first.button(key="snd_reload_demo partner").click().run()
-        self.assertFalse(first.exception)
+        # The saved version is reloaded automatically; the removed
+        # "Reload saved requirements" button is no longer needed to recover.
         self.assertFalse(first.button(key="snd_save_demo partner").disabled)
-        self.assertEqual(first.dataframe[0].value.iloc[0]["Deliverable"], "Updated in another session")
+        self.assertEqual(
+            first.dataframe[0].value.iloc[0]["Deliverable"], "Updated in another session"
+        )
+        self.assertTrue(any("reloaded" in warning.value for warning in first.warning))
         reopened = self.app()
         self.assertEqual(reopened.dataframe[0].value.iloc[0]["Deliverable"], "Updated in another session")
+
+    def test_reload_saved_requirements_button_is_not_rendered(self):
+        """Task: the Reload Saved Requirement button is withdrawn from the UI.
+
+        Normal loading of saved requirements must keep working: the editor is
+        still seeded from the store, and Save / Check Fulfillment stay.
+        """
+        self.save_partner("Demo Partner", "ELDs", deliverable="Saved deliverable")
+        app = self.app()
+        self.assertFalse(app.exception)
+        labels = [item.label for item in app.button]
+        self.assertFalse([label for label in labels if "reload" in label.casefold()])
+        self.assertFalse([item for item in app.button if item.key == "snd_reload_demo partner"])
+        self.assertEqual(app.dataframe[0].value.iloc[0]["Deliverable"], "Saved deliverable")
+        self.assertIn("Save S&D Requirements", labels)
+        self.assertTrue([label for label in labels if "Check Fulfillment" in label])
 
     def test_inactive_and_renamed_partner_records_remain_accessible(self):
         self.save_partner("Old Partner Name", "ELDs", deliverable="Retained requirement")

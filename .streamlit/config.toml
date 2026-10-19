@@ -25,6 +25,20 @@ baseRadius = "1rem"
 borderColor = "#2D4263"
 showWidgetBorder = false
 
+# Palet Light Mode untuk komponen BAWAAN Streamlit (termasuk isi tabel
+# st.dataframe yang digambar di canvas dan tidak bisa diwarnai lewat CSS).
+# Tampilan dashboard sendiri tetap dikendalikan pemilih tema di sidebar;
+# bagian ini hanya berlaku kalau tema dasar Streamlit diubah menjadi light
+# dari menu Appearance milik Streamlit. Dark Mode tidak terpengaruh.
+[theme.light]
+primaryColor = "#2563B6"
+backgroundColor = "#FBFDFF"
+secondaryBackgroundColor = "#F2F7FE"
+textColor = "#152945"
+borderColor = "#DEE8F6"
+dataframeHeaderBackgroundColor = "#F2F7FE"
+showWidgetBorder = true
+
 [server]
 # Dashboard memuat nama partner dan nilai kontrak, dan tidak punya
 # autentikasi. Saat dijalankan lokal, jangan dengarkan alamat publik.

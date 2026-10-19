@@ -148,6 +148,86 @@ def normalize_partner_function(value) -> str | None:
     return {"eld": "ELDs", "elds": "ELDs", "ewa": "EwAs", "ewas": "EwAs", "ss": "SS"}.get(token)
 
 
+# ---------------------------------------------------------------------------
+# Invoice exception — satu bentuk kanonik untuk semua lapisan
+# ---------------------------------------------------------------------------
+#
+# ATURAN BISNIS (dikonfirmasi BD):
+#   Partnership in-kind dan partner tanpa membership TIDAK memerlukan invoice,
+#   jadi Invoice Exception menampilkan "N/A", bukan "Missing".
+#
+# MASALAH YANG DIPERBAIKI:
+#   Nilai pengecualian pernah tersimpan dalam bentuk lain ("inkind", "in-kind",
+#   "IN KIND", "no membership") - lewat edit manual di storage, versi lama, atau
+#   hasil migrasi. Lapisan penyimpanan hanya mengenali ejaan tepat "In-Kind" dan
+#   "No Membership", sehingga ejaan lain DIBUANG diam-diam dan partner yang sudah
+#   ditandai inkind kembali terbaca "Missing".
+#
+#   Karena itu perbandingan status tidak boleh lagi bergantung pada huruf besar/
+#   kecil, tanda hubung, atau spasi. Nilai sumber tidak diubah; yang
+#   dinormalisasi hanya pembacaannya (dan penulisan baru selalu kanonik).
+
+#: Alasan pengecualian invoice dalam bentuk kanonik.
+INVOICE_EXCEPTION_REASONS: tuple[str, ...] = ("In-Kind", "No Membership")
+
+#: Token (huruf kecil, tanpa tanda baca) -> bentuk kanonik.
+INVOICE_EXCEPTION_ALIASES: dict[str, str] = {
+    "inkind": "In-Kind",
+    "inkinds": "In-Kind",
+    "inkindpartnership": "In-Kind",
+    "inkindpartner": "In-Kind",
+    "barter": "In-Kind",
+    "nomembership": "No Membership",
+    "nonmembership": "No Membership",
+    "withoutmembership": "No Membership",
+    "nomembershipfee": "No Membership",
+    "tanpamembership": "No Membership",
+}
+
+#: Nilai yang berarti "invoice tetap diperlukan" / tidak ada pengecualian.
+INVOICE_REQUIRED_TOKENS = frozenset(
+    {"", "required", "invoicerequired", "wajib", "none", "null", "nan", "na", "-"}
+)
+
+
+def canonical_invoice_reason(value) -> str | None:
+    """Bentuk kanonik alasan pengecualian invoice, atau None kalau tidak ada.
+
+    Menerima ejaan apa pun yang sama setelah huruf besar/kecil, spasi, dan
+    tanda hubung diabaikan: "inkind", "in-kind", "IN KIND", "In Kind" semuanya
+    menjadi "In-Kind". Nilai yang berarti "tetap wajib invoice" (termasuk
+    kosong dan NaN) menjadi None.
+
+    Nilai yang tidak dikenali juga menjadi None — pengecualian tidak pernah
+    disimpulkan dari teks bebas, karena menebak di sini akan menyatakan
+    invoice tidak diperlukan padahal belum diputuskan.
+    """
+    token = re.sub(r"[\W_]+", "", clean_text(value).casefold())
+    if token in INVOICE_REQUIRED_TOKENS:
+        return None
+    if token in INVOICE_EXCEPTION_ALIASES:
+        return INVOICE_EXCEPTION_ALIASES[token]
+    for reason in INVOICE_EXCEPTION_REASONS:
+        if token == re.sub(r"[\W_]+", "", reason.casefold()):
+            return reason
+    return None
+
+
+def invoice_exception_map(raw: dict | None) -> dict[str, str]:
+    """Normalisasi seluruh peta pengecualian invoice sekaligus.
+
+    Kunci (partner key) dibiarkan apa adanya; hanya nilainya yang dikanonikkan.
+    Entri yang alasannya tidak dikenali dibuang, supaya "invoice tidak
+    diperlukan" tidak pernah berdasar nilai yang tidak jelas artinya.
+    """
+    normalized: dict[str, str] = {}
+    for key, value in (raw or {}).items():
+        reason = canonical_invoice_reason(value)
+        if reason is not None:
+            normalized[str(key)] = reason
+    return normalized
+
+
 def attach_partner_functions(df_partner: pd.DataFrame, df_mr: pd.DataFrame) -> pd.DataFrame:
     """Resolve ESSM ownership before period filtering or partner deduplication.
 
